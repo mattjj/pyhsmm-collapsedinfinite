@@ -35,13 +35,18 @@ class collapsed_hdphsmm_states(object):
             self.T = T
             self.generate()
         elif data is None:
+            self.T = stateseq.shape[0]
             self.stateseq = stateseq
             self.generate_obs()
         elif stateseq is None:
+            self.T = data.shape[0]
             self.data = data
             self.generate_states()
         else:
-            self.generate()
+            assert data.shape[0] == stateseq.shape[0]
+            self.stateseq = stateseq
+            self.data = data
+            self.T = data.shape[0]
 
     def resample(self):
         self.resample_segment_version()
@@ -186,6 +191,7 @@ class collapsed_hdphsmm_states(object):
         '''
         # all the ugly logic is in this method
         # temporarily modifies members, like self.stateseq and maybe self.data
+        assert self.stateseq[t] == SAMPLING
 
         # save original views
         orig_data = self.data
@@ -197,26 +203,28 @@ class collapsed_hdphsmm_states(object):
         wholegroup, pieces = self._get_local_slices(orig_stateseq,t)
         orig_stateseq[t] = SAMPLING
 
-        # build local group, messing with self.data and self.stateseq
-        exclusion = wholegroup; exclusion[t] = False # keep the SAMPLING index in there to break the stateseq
+        # build local group of statistics, messing with self.data and self.stateseq views
         localgroup = []
-        for piece in pieces:
+        exclusion = np.zeros(self.T,dtype=bool)
+        exclusion[wholegroup] = True
+        exclusion[t] = False # include t to break pieces; its label is SAMPLING
+        for piece, val in pieces:
             # hide the stuff we don't want to count
             self.data = ma.masked_array(orig_data,exclusion)
             self.stateseq = ma.masked_array(orig_stateseq,exclusion)
 
             # get all the other data (using our handy exclusion)
-            otherdata, otherdurs = self.model.get_data_withlabel(k), self.model.get_durs_withlabel(k)
+            otherdata, otherdurs = self.model.get_data_withlabel(val), self.model.get_durs_withlabel(val)
 
             # add a piece to our localgroup
-            localgroup.append(((orig_data[piece],otherdata),(np.sum(piece),otherdurs)))
+            localgroup.append(((orig_data[piece],otherdata),(piece.stop-piece.start,otherdurs)))
 
             # remove the used piece from the exclusion
-            exclusion &= ~piece
+            exclusion[piece] = False
 
         # restore original views
         self.data = orig_data
-        self.statseq = orig_stateseq
+        self.stateseq = orig_stateseq
 
         # return
         return localgroup
@@ -228,16 +236,14 @@ class collapsed_hdphsmm_states(object):
         '''
         A,B = fill(stateseq,t-1), fill(stateseq,t+1)
         if A == B:
-            return A, (A,)
+            return A, ((A,stateseq[A.start]),)
         elif A.start <= t < A.stop or B.start <= t < B.stop:
-            return slice(A.start,B.stop), [x for x in (A,B) if x.stop - x.start > 0]
+            return slice(A.start,B.stop), [(x,stateseq[x.start]) for x in (A,B) if x.stop - x.start > 0]
         else:
             It = slice(t,t+1)
-            return slice(A.start,B.stop), [x for x in (A,It,B) if x.stop - x.start > 0]
+            return slice(A.start,B.stop), [(x,stateseq[x.start]) for x in (A,It,B) if x.stop - x.start > 0]
 
     ### super-state sampler stuff
-
-    # TODO
 
     def resample_superstate_version(self):
         raise NotImplementedError
@@ -251,8 +257,7 @@ class collapsed_stickyhdphmm_states(object):
 #  Utility Functions  #
 #######################
 
-# TODO might want to make these faster...
-# maybe factor them out into a cython util file
+# maybe factor these out into a cython util file
 
 def fill(seq,t):
     if t < 0:

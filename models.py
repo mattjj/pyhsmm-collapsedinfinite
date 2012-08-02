@@ -53,7 +53,7 @@ class collapsed(object):
 
 
 class collapsed_hdphsmm(collapsed):
-    def __init__(self,gamma,alpha,obs,dur,data):
+    def __init__(self,gamma,alpha,obs,dur):
         self.gamma = gamma
         self.alpha = alpha
         self.obs = obs
