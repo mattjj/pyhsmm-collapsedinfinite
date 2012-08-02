@@ -2,6 +2,7 @@ from __future__ import division
 import numpy as np
 na = np.newaxis
 import numpy.ma as ma
+import operator
 
 from pyhsmm.util.stats import sample_discrete
 from pyhsmm.util.general import rle
@@ -62,7 +63,7 @@ class collapsed_hdphsmm_states(object):
         stateseq_norep = get_norep(stateseq)[:-1] # EXCEPT last
         rawcount = np.sum(stateseq_norep == k)
         if SAMPLING in stateseq_norep:
-            sampling_index = np.where(stateseq_norep == SAMPLING)[0]
+            sampling_index, = np.where(stateseq_norep == SAMPLING)
             if sampling_index > 0 and stateseq[sampling_index-1] == k:
                 return rawcount - 1
         return rawcount
@@ -73,7 +74,7 @@ class collapsed_hdphsmm_states(object):
         if k1 not in stateseq:
             return 0
         else:
-            from_indices = np.where(stateseq_norep[:-1] == k1)[0] # EXCEPT last
+            from_indices, = np.where(stateseq_norep[:-1] == k1) # EXCEPT last
             return np.sum(stateseq_norep[from_indices + 1] == k2)
 
     @classmethod
@@ -193,7 +194,7 @@ class collapsed_hdphsmm_states(object):
         # temporarily set stateseq to hypothetical stateseq
         # so that we can get the indicator sequence
         orig_stateseq[t] = k
-        wholegroup, pieces = self._get_local_indicators(orig_stateseq,t)
+        wholegroup, pieces = self._get_local_slices(orig_stateseq,t)
         orig_stateseq[t] = SAMPLING
 
         # build local group, messing with self.data and self.stateseq
@@ -221,13 +222,18 @@ class collapsed_hdphsmm_states(object):
         return localgroup
 
     @classmethod
-    def _get_local_indicators(stateseq,t):
+    def _get_local_slices(stateseq,t):
         '''
-        returns indicators wholegroup, (piece1, ...)
-        wholegroup is 1 on the whole local group
-        there are up to three pieces, each indicating a sub segment
+        returns slices: wholegroup, (piece1, ...)
         '''
-        raise NotImplementedError
+        A,B = fill(stateseq,t-1), fill(stateseq,t+1)
+        if A == B:
+            return A, (A,)
+        elif A.start <= t < A.stop or B.start <= t < B.stop:
+            return A|B, [x for x in (A,B) if x.stop - x.start > 0]
+        else:
+            It = slice(t,t+1)
+            return A|B|It, [x for x in (A,It,B) if x.stop - x.start > 0]
 
     ### super-state sampler stuff
 
@@ -244,6 +250,16 @@ class collapsed_stickyhdphmm_states(object):
 #######################
 #  Utility Functions  #
 #######################
+
+def fill(seq,t):
+    # TODO implement in C to make this fast
+    if t < 0 or t > seq.shape[0]:
+        return slice(0,0) # empty
+    else:
+        endindices, = np.where(np.diff(seq) != 0) # internal end indices (not incl -1 and T-1)
+        startindices = np.concatenate(((0,),endindices+1,(seq.shape[0],))) # incl 0 and T
+        idx = np.where(startindices <= t)[0][-1]
+        return slice(startindices[idx],startindices[idx+1])
 
 def get_norep(s):
     # TODO can make faster
