@@ -252,6 +252,7 @@ class collapsed_stickyhdphmm_states(object):
 #######################
 
 # TODO might want to make these faster...
+# maybe factor them out into a cython util file
 
 def fill(seq,t):
     if t < 0:
