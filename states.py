@@ -1,12 +1,21 @@
 from __future__ import division
 import numpy as np
 na = np.newaxis
+import numpy.ma as ma
 
-from pyhsmm.util.states import sample_discrete
+from pyhsmm.util.stats import sample_discrete
 from pyhsmm.util.general import rle
 
-NEW = None
-SAMPLING = -1
+NEW = -1
+SAMPLING = -2
+
+# TODO add caching so that, e.g., lots of calls with the same t in a row are faster
+
+# TODO test all these gorram count methods
+
+####################
+#  States Classes  #
+####################
 
 class collapsed_hdphsmm_states(object):
     def __init__(self,model,betavec,alpha,obsclass,durclass,data=None,T=None,stateseq=None):
@@ -19,33 +28,66 @@ class collapsed_hdphsmm_states(object):
 
         self.data = data
 
-        if data is None:
-            assert T is not None
-            assert stateseq is None, 'not implemented yet!'
+        if (data,stateseq) == (None,None):
+            # generating
+            assert T is not None, 'must pass in T when generating'
             self.T = T
             self.generate()
-        else:
+        elif data is None:
+            self.stateseq = stateseq
+            self.generate_obs()
+        elif stateseq is None:
             self.data = data
-            self.T = data.shape[0]
             self.generate_states()
+        else:
+            self.generate()
 
     def resample(self):
         self.resample_segment_version()
 
     def get_counts_from(self,k):
-        raise NotImplementedError
+        return self._get_counts_from(self.stateseq,k)
 
     def get_counts_fromto(self,k1,k2):
-        raise NotImplementedError
+        return self._get_counts_fromto(self.stateseq,k1,k2)
 
     def get_data_withlabel(self,k):
-        raise NotImplementedError
+        return self._get_data_withlabel(self.stateseq,self.data,k)
 
     def get_durs_withlabel(self,k):
-        raise NotImplementedError
+        return self._get_durs_withlabel(self.stateseq,k)
 
-    def get_occupied(self):
-        raise NotImplementedError
+    @classmethod
+    def _get_counts_from(cls,stateseq,k):
+        stateseq_norep = get_norep(stateseq)[:-1] # EXCEPT last
+        rawcount = np.sum(stateseq_norep == k)
+        if SAMPLING in stateseq_norep:
+            sampling_index = np.where(stateseq_norep == SAMPLING)[0]
+            if sampling_index > 0 and stateseq[sampling_index-1] == k:
+                return rawcount - 1
+        return rawcount
+
+    @classmethod
+    def _get_counts_fromto(cls,stateseq,k1,k2):
+        stateseq_norep = get_norep(stateseq)
+        if k1 not in stateseq:
+            return 0
+        else:
+            from_indices = np.where(stateseq_norep[:-1] == k1)[0] # EXCEPT last
+            return np.sum(stateseq_norep[from_indices + 1] == k2)
+
+    @classmethod
+    def _get_data_withlabel(cls,stateseq,data,k):
+        return data[stateseq == k]
+
+    @classmethod
+    def _get_durs_withlabel(cls,stateseq,k):
+        stateseq_norep, durs = rle(stateseq)
+        return durs[stateseq_norep == k]
+
+    @classmethod
+    def _get_occupied(cls,stateseq):
+        return set(stateseq)
 
     def _new_label(self,ks):
         # sample beta conditioned on finding a new label
@@ -137,8 +179,55 @@ class collapsed_hdphsmm_states(object):
         return score
 
     def _get_local_group(self,t,k):
+        '''
+        returns a sequence of length between 1 and 3, where each sequence element is
+        ((data,otherdata), (dur,otherdurs))
+        '''
+        # all the ugly logic is in this method
+        # temporarily modifies members, like self.stateseq and maybe self.data
+
+        # save original views
+        orig_data = self.data
+        orig_stateseq = self.stateseq
+
+        # temporarily set stateseq to hypothetical stateseq
+        # so that we can get the indicator sequence
+        orig_stateseq[t] = k
+        wholegroup, pieces = self._get_local_indicators(orig_stateseq,t)
+        orig_stateseq[t] = SAMPLING
+
+        # build local group, messing with self.data and self.stateseq
+        exclusion = wholegroup; exclusion[t] = False # keep the SAMPLING index in there to break the stateseq
+        localgroup = []
+        for piece in pieces:
+            # hide the stuff we don't want to count
+            self.data = ma.masked_array(orig_data,exclusion)
+            self.stateseq = ma.masked_array(orig_stateseq,exclusion)
+
+            # get all the other data (using our handy exclusion)
+            otherdata, otherdurs = self.model.get_data_withlabel(k), self.model.get_durs_withlabel(k)
+
+            # add a piece to our localgroup
+            localgroup.append(((orig_data[piece],otherdata),(np.sum(piece),otherdurs)))
+
+            # remove the used piece from the exclusion
+            exclusion &= ~piece
+
+        # restore original views
+        self.data = orig_data
+        self.statseq = orig_stateseq
+
+        # return
+        return localgroup
+
+    @classmethod
+    def _get_local_indicators(stateseq,t):
+        '''
+        returns indicators wholegroup, (piece1, ...)
+        wholegroup is 1 on the whole local group
+        there are up to three pieces, each indicating a sub segment
+        '''
         raise NotImplementedError
-        # lots of calls with same t and rest of stateseq in a row... could cache
 
     ### super-state sampler stuff
 
@@ -147,6 +236,16 @@ class collapsed_hdphsmm_states(object):
     def resample_superstate_version(self):
         raise NotImplementedError
 
+
 class collapsed_stickyhdphmm_states(object):
     pass
+
+
+#######################
+#  Utility Functions  #
+#######################
+
+def get_norep(s):
+    # TODO can make faster
+    return rle(s)[0]
 

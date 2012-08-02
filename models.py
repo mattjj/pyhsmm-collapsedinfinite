@@ -4,9 +4,10 @@ import abc
 
 import transitions, states
 
+# TODO methods to convert to/from weak limit representations
+
 def union(itr):
     return reduce(operator.or_, itr)
-
 
 class collapsed(object):
     __metaclass__ = abc.ABCMeta
