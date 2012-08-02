@@ -222,7 +222,7 @@ class collapsed_hdphsmm_states(object):
         return localgroup
 
     @classmethod
-    def _get_local_slices(stateseq,t):
+    def _get_local_slices(cls,stateseq,t):
         '''
         returns slices: wholegroup, (piece1, ...)
         '''
@@ -230,10 +230,10 @@ class collapsed_hdphsmm_states(object):
         if A == B:
             return A, (A,)
         elif A.start <= t < A.stop or B.start <= t < B.stop:
-            return A|B, [x for x in (A,B) if x.stop - x.start > 0]
+            return slice(A.start,B.stop), [x for x in (A,B) if x.stop - x.start > 0]
         else:
             It = slice(t,t+1)
-            return A|B|It, [x for x in (A,It,B) if x.stop - x.start > 0]
+            return slice(A.start,B.stop), [x for x in (A,It,B) if x.stop - x.start > 0]
 
     ### super-state sampler stuff
 
@@ -251,10 +251,13 @@ class collapsed_stickyhdphmm_states(object):
 #  Utility Functions  #
 #######################
 
+# TODO might want to make these faster...
+
 def fill(seq,t):
-    # TODO implement in C to make this fast
-    if t < 0 or t > seq.shape[0]:
-        return slice(0,0) # empty
+    if t < 0:
+        return slice(0,0)
+    elif t > seq.shape[0]-1:
+        return slice(seq.shape[0],seq.shape[0])
     else:
         endindices, = np.where(np.diff(seq) != 0) # internal end indices (not incl -1 and T-1)
         startindices = np.concatenate(((0,),endindices+1,(seq.shape[0],))) # incl 0 and T
@@ -262,6 +265,5 @@ def fill(seq,t):
         return slice(startindices[idx],startindices[idx+1])
 
 def get_norep(s):
-    # TODO can make faster
     return rle(s)[0]
 
