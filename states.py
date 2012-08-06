@@ -7,6 +7,8 @@ import operator
 from pyhsmm.util.stats import sample_discrete
 from pyhsmm.util.general import rle
 
+# TODO can just mask state sequence... may be easier
+
 NEW = -1
 SAMPLING = -2
 
@@ -272,4 +274,3 @@ def fill(seq,t):
 
 def get_norep(s):
     return rle(s)[0]
-
