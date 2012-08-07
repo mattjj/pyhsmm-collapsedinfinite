@@ -12,14 +12,14 @@ infinite_vector = defaultdict
 # TODO can i make this into a distribution or something?
 
 class beta(object):
-    def __init__(self,gamma):
-        self.gamma = gamma
-        self.betavec = infinite_vector(stickbreaking(gamma).next)
+    def __init__(self,gamma_0):
+        self.gamma_0 = gamma_0
+        self.betavec = infinite_vector(stickbreaking(gamma_0).next)
 
     def resample(self,nonzerocountsdict):
         ks, counts = nonzerocountsdict.keys(), np.array(nonzerocountsdict.values())
-        weights = np.random.dirichlet(np.concatenate(self.gamma + counts, self.gamma))
-        newbetavec = infinite_vector(stickbreaking(self.gamma,total=weights[-1]).next)
+        weights = np.random.dirichlet(np.concatenate(self.gamma_0 + counts, self.gamma_0))
+        newbetavec = infinite_vector(stickbreaking(self.gamma_0,total=weights[-1]).next)
         newbetavec.update(zip(ks,weights[:-1]))
 
     def rvs(self,size=[]):
