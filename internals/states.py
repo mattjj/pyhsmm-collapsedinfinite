@@ -2,26 +2,187 @@ from __future__ import division
 import numpy as np
 na = np.newaxis
 import numpy.ma as ma
-import operator
 
-from pyhsmm.util.stats import sample_discrete
+from pyhsmm.util.stats import sample_discrete, sample_discrete_from_log
 from pyhsmm.util.general import rle
-
-# TODO can just mask state sequence... may be easier
-
-NEW = -1
-SAMPLING = -2
-
-# TODO add caching so that, e.g., lots of calls with the same t in a row are faster
-
-# TODO test all these gorram count methods
 
 ####################
 #  States Classes  #
 ####################
 
-class collapsed_hdphsmm_states(object):
+class collapsed_stickyhdphmm_states(object):
+    # TODO can reuse all this from (non-sticky) hdphmm class if i set
+    # self.alpha to be alpha+kappa, though would need to wrap self-transitions
+    # somehow...
+    def __init__(self,model,betavec,alpha_0,kappa,obs,data=None,T=None,stateseq=None):
+        self.alpha_0 = alpha_0
+
+        self.model = model
+        self.betavec = betavec
+        self.obs = obs
+
+        self.data = data
+
+        if (data,stateseq) == (None,None):
+            # generating
+            assert T is not None, 'must pass in T when generating'
+            self._generate(T)
+        elif data is None:
+            self.T = stateseq.shape[0]
+            self.stateseq = stateseq
+        elif stateseq is None:
+            self._generate(data.shape[0])
+        else:
+            assert data.shape[0] == stateseq.shape[0]
+            self.stateseq = stateseq
+            self.data = data
+            self.T = data.shape[0]
+
+        def _generate(self,T):
+            self.T = T
+            alpha, kappa = self.alpha_0, self.kappa
+            betavec = self.beta.betavec
+            self.stateseq = stateseq = np.empty(T,dtype=np.int)
+            model = self.model
+
+            # NOTE: we have a choice of what state to start in; it's just a
+            # definition choice that isn't specified in the HDP-HMM
+            # Here, we choose just to sample from beta. Note that if this is the
+            # first chain being sampled in this model, this will always sample
+            # zero, since no states will be occupied.
+            ks = model._get_occupied()
+            betarest = 1-sum(betavec[k] for k in ks)
+            scores = np.array([betavec[k] for k in ks] + [betarest])
+            firststate = sample_discrete(scores)
+            if firststate == scores.shape[0]-1:
+                stateseq[0] = self._new_label(ks)
+            else:
+                stateseq[0] = ks[firststate]
+
+            # runs a CRF with fixed weights beta forwards
+            for t in range(1,T):
+                state = stateseq[t-1]
+                ks = model._get_occupied()
+                betarest = 1-sum(betavec[k] for k in ks)
+                # get the counts of new states coming out of our current state
+                # going to all other states
+                fromto_counts = np.array([model._get_counts_fromto(state,k) for k in ks])
+                total_from = fromto_counts.sum()
+                # for those states plus a new one, sample proportional to
+                # ((alpha+kappa)*beta + fromto) / (alpha+kappa+totalfrom)
+                scores = np.array([((alpha+kappa)*betavec[k] + ft)/(alpha+kappa+total_from)
+                        for ft in fromto_counts] + [((alpha+kappa)*betarest)/(alpha+kappa+total_from)])
+                nextstate = sample_discrete(scores)
+                if nextstate == scores.shape[0]-1:
+                    stateseq[t] = self._new_label(ks)
+                else:
+                    stateseq[t] = ks[nextstate]
+
+        def resample(self):
+            model, alpha, betavec = self.model, self.alpha_0, self.betavec
+            self.z = ma.masked_array(self.z,mask=np.zeros(self.z.shape))
+
+            for t in np.random.permutation(self.T):
+                # throw out old value
+                self.z.mask[t] = True
+
+                # form the scores and sample from them
+                ks = list(model._get_occupied())
+                scores = np.array([self._get_score(k,t) for k in ks]+[self._get_new_score(ks,t)])
+                idx = sample_discrete_from_log(scores)
+
+                # set the state
+                if idx == scores.shape[0]-1:
+                    self.z[t] = self._new_label(ks)
+                else:
+                    self.z[t] = ks[idx] # resets the mask
+
+        def _get_score(self,k,t):
+            alpha, kappa = self.alpha_0, self.kappa
+            betavec, model, o = self.betavec, self.model, self.obs
+            data, stateseq = self.data, self.stateseq
+
+            score = 0
+
+            # left transition score
+            if t > 0:
+                b = betavec[k]
+                if stateseq[t-1] == k:
+                    b += kappa
+                score += np.log( ((alpha+kappa)*b + model._get_counts_fromto(stateseq[t-1],k)) \
+                        / (alpha+kappa+model._get_counts_from(stateseq[t-1])))
+
+            # right transition score
+            if t < self.T - 1:
+                b = betavec[stateseq[t+1]]
+                if stateseq[t+1] == k:
+                    b += kappa
+
+                # indicators since we may need to include the left transition in
+                # counts (since we are scoring exchangeably, not independently)
+                if t > 0:
+                    another_from = 1 if stateseq[t-1] == k else 0
+                    another_fromto = 1 if stateseq[t-1] == k and stateseq[t+1] == k else 0
+
+                score += np.log( ((alpha+kappa)*b + model._get_counts_fromto(k,stateseq[t+1]) + another_fromto) \
+                        / (alpha+kappa+model._counts_from(k) + another_from))
+
+            # observation score
+            score += o.log_predictive(data[t],model._get_data_withlabel(k))
+
+            return score
+
+        def _get_new_score(self,ks,t):
+            alpha, kappa = self.alpha_0, self.kappa
+            betavec, model, o = self.betavec, self.model, self.obs
+            data, stateseq = self.data, self.stateseq
+
+            score = 0
+
+            # left transition score
+            if t > 0:
+                betarest = 1-sum(betavec[k] for k in ks)
+                score += np.log((alpha+kappa)*betarest
+                        /(alpha+kappa+model._get_counts_from(stateseq[t-1])))
+
+            # right transition score
+            if t < self.T-1:
+                score += np.log(betavec[stateseq[t+1]])
+
+            # observation score
+            score += o.log_marginal_likelihood(data[t])
+
+        def _new_label(self,ks):
+            # return a label that isn't already used
+            newlabel = np.random.randint(low=0,high=5*max(ks))
+            while newlabel in ks:
+                newlabel = np.random.randint(low=0,high=5*max(ks))
+            return newlabel
+
+        # masking self.z in resample() makes the _get methods work
+
+        def _get_counts_from(self,k):
+            return np.sum(stateseq[:-1] == k) # except last!
+
+        def _get_counts_fromto(self,k1,k2):
+            if k1 not in self.stateseq:
+                return 0
+            else:
+                from_indices, = np.where(self.stateseq[:-1] == k1) # EXCEPT last
+                return np.sum(stateseq[from_indices+1] == k2)
+
+        def _get_data_withlabel(self,k):
+            return self.data[stateseq == k]
+
+        def _get_occupied(self):
+            return set(self.stateseq)
+
+
+# TODO TODO below here
+
+class collapsed_hdphsmm_states(object): # TODO this class is broken!
     def __init__(self,model,betavec,alpha,obsclass,durclass,data=None,T=None,stateseq=None):
+        raise NotImplementedError, 'this class is currently borked'
         self.alpha = alpha
 
         self.model = model
@@ -53,20 +214,20 @@ class collapsed_hdphsmm_states(object):
     def resample(self):
         self.resample_segment_version()
 
-    def get_counts_from(self,k):
-        return self._get_counts_from(self.stateseq,k)
+    def _get_counts_from(self,k):
+        return self.__get_counts_from(self.stateseq,k)
 
-    def get_counts_fromto(self,k1,k2):
-        return self._get_counts_fromto(self.stateseq,k1,k2)
+    def _get_counts_fromto(self,k1,k2):
+        return self.__get_counts_fromto(self.stateseq,k1,k2)
 
-    def get_data_withlabel(self,k):
-        return self._get_data_withlabel(self.stateseq,self.data,k)
+    def _get_data_withlabel(self,k):
+        return self.__get_data_withlabel(self.stateseq,self.data,k)
 
-    def get_durs_withlabel(self,k):
-        return self._get_durs_withlabel(self.stateseq,k)
+    def _get_durs_withlabel(self,k):
+        return self.__get_durs_withlabel(self.stateseq,k)
 
     @classmethod
-    def _get_counts_from(cls,stateseq,k):
+    def __get_counts_from(cls,stateseq,k):
         stateseq_norep = get_norep(stateseq)[:-1] # EXCEPT last
         rawcount = np.sum(stateseq_norep == k)
         if SAMPLING in stateseq_norep:
@@ -76,28 +237,27 @@ class collapsed_hdphsmm_states(object):
         return rawcount
 
     @classmethod
-    def _get_counts_fromto(cls,stateseq,k1,k2):
-        stateseq_norep = get_norep(stateseq)
+    def __get_counts_fromto(cls,stateseq,k1,k2):
         if k1 not in stateseq:
             return 0
         else:
+            stateseq_norep = get_norep(stateseq)
             from_indices, = np.where(stateseq_norep[:-1] == k1) # EXCEPT last
             return np.sum(stateseq_norep[from_indices + 1] == k2)
 
     @classmethod
-    def _get_data_withlabel(cls,stateseq,data,k):
+    def __get_data_withlabel(cls,stateseq,data,k):
         return data[stateseq == k]
 
     @classmethod
-    def _get_durs_withlabel(cls,stateseq,k):
+    def __get_durs_withlabel(cls,stateseq,k):
         stateseq_norep, durs = rle(stateseq)
         return durs[stateseq_norep == k]
 
-    @classmethod
-    def _get_occupied(cls,stateseq):
-        return set(stateseq)
+    def _get_occupied(self,stateseq):
+        return set(self.stateseq)
 
-    def _new_label(self,ks):
+    def _new_label(self,ks): # TODO this should be in transitions
         # sample beta conditioned on finding a new label
         beta = self.betavec
 
@@ -120,7 +280,7 @@ class collapsed_hdphsmm_states(object):
             self.stateseq[t] = SAMPLING
 
             # sample a new value
-            ks = self.model.get_occupied()
+            ks = self.model._get_occupied()
             scores = [self._label_score(t,k) for k in ks] + [self._new_label_score(t,ks)]
             labels = ks + [NEW]
             newlabel = labels[sample_discrete(scores)]
@@ -151,7 +311,7 @@ class collapsed_hdphsmm_states(object):
                     (alpha * (1-beta[k]) + model.counts_from(k))
 
         # predictive likelihoods
-        for (data,otherdata), (dur,otherdurs) in self._get_local_group(t,k):
+        for (data,otherdata), (dur,otherdurs) in self.__get_local_group(t,k):
             score *= obs.predictive(data,otherdata) * durs.predictive(dur,otherdurs)
 
         return score
@@ -216,7 +376,7 @@ class collapsed_hdphsmm_states(object):
             self.stateseq = ma.masked_array(orig_stateseq,exclusion)
 
             # get all the other data (using our handy exclusion)
-            otherdata, otherdurs = self.model.get_data_withlabel(val), self.model.get_durs_withlabel(val)
+            otherdata, otherdurs = self.model._get_data_withlabel(val), self.model._get_durs_withlabel(val)
 
             # add a piece to our localgroup
             localgroup.append(((orig_data[piece],otherdata),(piece.stop-piece.start,otherdurs)))
@@ -232,7 +392,7 @@ class collapsed_hdphsmm_states(object):
         return localgroup
 
     @classmethod
-    def _get_local_slices(cls,stateseq,t):
+    def __get_local_slices(cls,stateseq,t):
         '''
         returns slices: wholegroup, (piece1, ...)
         '''
@@ -249,10 +409,6 @@ class collapsed_hdphsmm_states(object):
 
     def resample_superstate_version(self):
         raise NotImplementedError
-
-
-class collapsed_stickyhdphmm_states(object):
-    pass
 
 
 #######################

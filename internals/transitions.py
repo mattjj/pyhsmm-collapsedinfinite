@@ -9,6 +9,8 @@ infinite_vector = defaultdict
 # TODO is keys() iter order guaranteed to be the same as values() iteration
 # order? i assume so :D
 
+# TODO can i make this into a distribution or something?
+
 class beta(object):
     def __init__(self,gamma):
         self.gamma = gamma
@@ -19,6 +21,9 @@ class beta(object):
         weights = np.random.dirichlet(np.concatenate(self.gamma + counts, self.gamma))
         newbetavec = infinite_vector(stickbreaking(self.gamma,total=weights[-1]).next)
         newbetavec.update(zip(ks,weights[:-1]))
+
+    def rvs(self,size=[]):
+        raise NotImplementedError
 
 def stickbreaking(gamma,total=1.):
     while True:
