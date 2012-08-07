@@ -5,7 +5,7 @@ from matplotlib import pyplot as plt
 import models, pybasicbayes
 from pymattutil.text import progprint_xrange
 
-blah = models.collapsed_stickyhdphmm(2,10,50,pybasicbayes.distributions.ScalarGaussianNIX(0.,0.01,1.,4))
+blah = models.collapsed_stickyhdphmm(2,10,50,pybasicbayes.distributions.ScalarGaussianNIX(0.,0.01,2.,3))
 data, truestates = blah.generate(50)
 
 plt.figure()
@@ -15,7 +15,7 @@ plt.title('data')
 plt.matshow(np.tile(truestates,(10,1)))
 plt.title('true states')
 
-blah = models.collapsed_stickyhdphmm(2,10,50,pybasicbayes.distributions.ScalarGaussianNIX(0.,0.01,1.,4))
+blah = models.collapsed_stickyhdphmm(2,10,50,pybasicbayes.distributions.ScalarGaussianNIX(0.,0.01,2.,3))
 blah.add_data(data)
 
 for itr in progprint_xrange(100):
