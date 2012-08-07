@@ -11,9 +11,6 @@ from pyhsmm.util.general import rle
 ####################
 
 class collapsed_stickyhdphmm_states(object):
-    # TODO can reuse all this from (non-sticky) hdphmm class if i set
-    # self.alpha to be alpha+kappa, though would need to wrap self-transitions
-    # somehow...
     def __init__(self,model,betavec,alpha_0,kappa,obs,data=None,T=None,stateseq=None):
         self.alpha_0 = alpha_0
 
@@ -80,11 +77,11 @@ class collapsed_stickyhdphmm_states(object):
 
     def resample(self):
         model, alpha, betavec = self.model, self.alpha_0, self.betavec
-        self.z = ma.masked_array(self.z,mask=np.zeros(self.z.shape))
+        self.stateseq = ma.masked_array(self.stateseq,mask=np.zeros(self.stateseq.shape,dtype=bool))
 
         for t in np.random.permutation(self.T):
             # throw out old value
-            self.z.mask[t] = True
+            self.stateseq.mask[t] = True
 
             # form the scores and sample from them
             ks = list(model._get_occupied())
@@ -93,9 +90,9 @@ class collapsed_stickyhdphmm_states(object):
 
             # set the state
             if idx == scores.shape[0]-1:
-                self.z[t] = self._new_label(ks)
+                self.stateseq[t] = self._new_label(ks)
             else:
-                self.z[t] = ks[idx] # resets the mask
+                self.stateseq[t] = ks[idx] # resets the mask
 
     def _get_score(self,k,t):
         alpha, kappa = self.alpha_0, self.kappa
@@ -159,23 +156,26 @@ class collapsed_stickyhdphmm_states(object):
             newlabel = np.random.randint(low=0,high=5*max(ks))
         return newlabel
 
-    # masking self.z in resample() makes the _get methods work
-
     def _get_counts_from(self,k):
         return np.sum(self.stateseq[:-1] == k) # except last!
 
     def _get_counts_fromto(self,k1,k2):
-        if k1 not in self.stateseq:
+        if k1 not in self.stateseq or k2 not in self.stateseq:
             return 0
         else:
             from_indices, = np.where(self.stateseq[:-1] == k1) # EXCEPT last
-            return np.sum(self.stateseq[from_indices+1] == k2)
+            # can't simpler line because of a numpy bug where
+            # np.sum(ma.masked_array([1],mask=[True])) != 0
+            temp = np.sum(self.stateseq[from_indices+1] == k2)
+            return 0 if ma.is_masked(temp) else temp
+
 
     def _get_data_withlabel(self,k):
         return self.data[self.stateseq == k]
 
     def _get_occupied(self):
-        return set(self.stateseq)
+        # maybe another bug that np.unique includes masked
+        return set(self.stateseq) - set((ma.masked,))
 
 
 # TODO TODO below here
