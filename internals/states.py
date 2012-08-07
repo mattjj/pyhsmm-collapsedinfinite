@@ -38,144 +38,144 @@ class collapsed_stickyhdphmm_states(object):
             self.data = data
             self.T = data.shape[0]
 
-        def _generate(self,T):
-            self.T = T
-            alpha, kappa = self.alpha_0, self.kappa
-            betavec = self.beta.betavec
-            self.stateseq = stateseq = np.empty(T,dtype=np.int)
-            model = self.model
+    def _generate(self,T):
+        self.T = T
+        alpha, kappa = self.alpha_0, self.kappa
+        betavec = self.beta.betavec
+        self.stateseq = stateseq = np.empty(T,dtype=np.int)
+        model = self.model
 
-            # NOTE: we have a choice of what state to start in; it's just a
-            # definition choice that isn't specified in the HDP-HMM
-            # Here, we choose just to sample from beta. Note that if this is the
-            # first chain being sampled in this model, this will always sample
-            # zero, since no states will be occupied.
+        # NOTE: we have a choice of what state to start in; it's just a
+        # definition choice that isn't specified in the HDP-HMM
+        # Here, we choose just to sample from beta. Note that if this is the
+        # first chain being sampled in this model, this will always sample
+        # zero, since no states will be occupied.
+        ks = model._get_occupied()
+        betarest = 1-sum(betavec[k] for k in ks)
+        scores = np.array([betavec[k] for k in ks] + [betarest])
+        firststate = sample_discrete(scores)
+        if firststate == scores.shape[0]-1:
+            stateseq[0] = self._new_label(ks)
+        else:
+            stateseq[0] = ks[firststate]
+
+        # runs a CRF with fixed weights beta forwards
+        for t in range(1,T):
+            state = stateseq[t-1]
             ks = model._get_occupied()
             betarest = 1-sum(betavec[k] for k in ks)
-            scores = np.array([betavec[k] for k in ks] + [betarest])
-            firststate = sample_discrete(scores)
-            if firststate == scores.shape[0]-1:
-                stateseq[0] = self._new_label(ks)
+            # get the counts of new states coming out of our current state
+            # going to all other states
+            fromto_counts = np.array([model._get_counts_fromto(state,k) for k in ks])
+            total_from = fromto_counts.sum()
+            # for those states plus a new one, sample proportional to
+            # ((alpha+kappa)*beta + fromto) / (alpha+kappa+totalfrom)
+            scores = np.array([((alpha+kappa)*betavec[k] + ft)/(alpha+kappa+total_from)
+                    for ft in fromto_counts] + [((alpha+kappa)*betarest)/(alpha+kappa+total_from)])
+            nextstate = sample_discrete(scores)
+            if nextstate == scores.shape[0]-1:
+                stateseq[t] = self._new_label(ks)
             else:
-                stateseq[0] = ks[firststate]
+                stateseq[t] = ks[nextstate]
 
-            # runs a CRF with fixed weights beta forwards
-            for t in range(1,T):
-                state = stateseq[t-1]
-                ks = model._get_occupied()
-                betarest = 1-sum(betavec[k] for k in ks)
-                # get the counts of new states coming out of our current state
-                # going to all other states
-                fromto_counts = np.array([model._get_counts_fromto(state,k) for k in ks])
-                total_from = fromto_counts.sum()
-                # for those states plus a new one, sample proportional to
-                # ((alpha+kappa)*beta + fromto) / (alpha+kappa+totalfrom)
-                scores = np.array([((alpha+kappa)*betavec[k] + ft)/(alpha+kappa+total_from)
-                        for ft in fromto_counts] + [((alpha+kappa)*betarest)/(alpha+kappa+total_from)])
-                nextstate = sample_discrete(scores)
-                if nextstate == scores.shape[0]-1:
-                    stateseq[t] = self._new_label(ks)
-                else:
-                    stateseq[t] = ks[nextstate]
+    def resample(self):
+        model, alpha, betavec = self.model, self.alpha_0, self.betavec
+        self.z = ma.masked_array(self.z,mask=np.zeros(self.z.shape))
 
-        def resample(self):
-            model, alpha, betavec = self.model, self.alpha_0, self.betavec
-            self.z = ma.masked_array(self.z,mask=np.zeros(self.z.shape))
+        for t in np.random.permutation(self.T):
+            # throw out old value
+            self.z.mask[t] = True
 
-            for t in np.random.permutation(self.T):
-                # throw out old value
-                self.z.mask[t] = True
+            # form the scores and sample from them
+            ks = list(model._get_occupied())
+            scores = np.array([self._get_score(k,t) for k in ks]+[self._get_new_score(ks,t)])
+            idx = sample_discrete_from_log(scores)
 
-                # form the scores and sample from them
-                ks = list(model._get_occupied())
-                scores = np.array([self._get_score(k,t) for k in ks]+[self._get_new_score(ks,t)])
-                idx = sample_discrete_from_log(scores)
+            # set the state
+            if idx == scores.shape[0]-1:
+                self.z[t] = self._new_label(ks)
+            else:
+                self.z[t] = ks[idx] # resets the mask
 
-                # set the state
-                if idx == scores.shape[0]-1:
-                    self.z[t] = self._new_label(ks)
-                else:
-                    self.z[t] = ks[idx] # resets the mask
+    def _get_score(self,k,t):
+        alpha, kappa = self.alpha_0, self.kappa
+        betavec, model, o = self.betavec, self.model, self.obs
+        data, stateseq = self.data, self.stateseq
 
-        def _get_score(self,k,t):
-            alpha, kappa = self.alpha_0, self.kappa
-            betavec, model, o = self.betavec, self.model, self.obs
-            data, stateseq = self.data, self.stateseq
+        score = 0
 
-            score = 0
+        # left transition score
+        if t > 0:
+            b = betavec[k]
+            if stateseq[t-1] == k:
+                b += kappa
+            score += np.log( ((alpha+kappa)*b + model._get_counts_fromto(stateseq[t-1],k)) \
+                    / (alpha+kappa+model._get_counts_from(stateseq[t-1])))
 
-            # left transition score
+        # right transition score
+        if t < self.T - 1:
+            b = betavec[stateseq[t+1]]
+            if stateseq[t+1] == k:
+                b += kappa
+
+            # indicators since we may need to include the left transition in
+            # counts (since we are scoring exchangeably, not independently)
             if t > 0:
-                b = betavec[k]
-                if stateseq[t-1] == k:
-                    b += kappa
-                score += np.log( ((alpha+kappa)*b + model._get_counts_fromto(stateseq[t-1],k)) \
-                        / (alpha+kappa+model._get_counts_from(stateseq[t-1])))
+                another_from = 1 if stateseq[t-1] == k else 0
+                another_fromto = 1 if stateseq[t-1] == k and stateseq[t+1] == k else 0
 
-            # right transition score
-            if t < self.T - 1:
-                b = betavec[stateseq[t+1]]
-                if stateseq[t+1] == k:
-                    b += kappa
+            score += np.log( ((alpha+kappa)*b + model._get_counts_fromto(k,stateseq[t+1]) + another_fromto) \
+                    / (alpha+kappa+model._counts_from(k) + another_from))
 
-                # indicators since we may need to include the left transition in
-                # counts (since we are scoring exchangeably, not independently)
-                if t > 0:
-                    another_from = 1 if stateseq[t-1] == k else 0
-                    another_fromto = 1 if stateseq[t-1] == k and stateseq[t+1] == k else 0
+        # observation score
+        score += o.log_predictive(data[t],model._get_data_withlabel(k))
 
-                score += np.log( ((alpha+kappa)*b + model._get_counts_fromto(k,stateseq[t+1]) + another_fromto) \
-                        / (alpha+kappa+model._counts_from(k) + another_from))
+        return score
 
-            # observation score
-            score += o.log_predictive(data[t],model._get_data_withlabel(k))
+    def _get_new_score(self,ks,t):
+        alpha, kappa = self.alpha_0, self.kappa
+        betavec, model, o = self.betavec, self.model, self.obs
+        data, stateseq = self.data, self.stateseq
 
-            return score
+        score = 0
 
-        def _get_new_score(self,ks,t):
-            alpha, kappa = self.alpha_0, self.kappa
-            betavec, model, o = self.betavec, self.model, self.obs
-            data, stateseq = self.data, self.stateseq
+        # left transition score
+        if t > 0:
+            betarest = 1-sum(betavec[k] for k in ks)
+            score += np.log((alpha+kappa)*betarest
+                    /(alpha+kappa+model._get_counts_from(stateseq[t-1])))
 
-            score = 0
+        # right transition score
+        if t < self.T-1:
+            score += np.log(betavec[stateseq[t+1]])
 
-            # left transition score
-            if t > 0:
-                betarest = 1-sum(betavec[k] for k in ks)
-                score += np.log((alpha+kappa)*betarest
-                        /(alpha+kappa+model._get_counts_from(stateseq[t-1])))
+        # observation score
+        score += o.log_marginal_likelihood(data[t])
 
-            # right transition score
-            if t < self.T-1:
-                score += np.log(betavec[stateseq[t+1]])
-
-            # observation score
-            score += o.log_marginal_likelihood(data[t])
-
-        def _new_label(self,ks):
-            # return a label that isn't already used
+    def _new_label(self,ks):
+        # return a label that isn't already used
+        newlabel = np.random.randint(low=0,high=5*max(ks))
+        while newlabel in ks:
             newlabel = np.random.randint(low=0,high=5*max(ks))
-            while newlabel in ks:
-                newlabel = np.random.randint(low=0,high=5*max(ks))
-            return newlabel
+        return newlabel
 
-        # masking self.z in resample() makes the _get methods work
+    # masking self.z in resample() makes the _get methods work
 
-        def _get_counts_from(self,k):
-            return np.sum(stateseq[:-1] == k) # except last!
+    def _get_counts_from(self,k):
+        return np.sum(stateseq[:-1] == k) # except last!
 
-        def _get_counts_fromto(self,k1,k2):
-            if k1 not in self.stateseq:
-                return 0
-            else:
-                from_indices, = np.where(self.stateseq[:-1] == k1) # EXCEPT last
-                return np.sum(stateseq[from_indices+1] == k2)
+    def _get_counts_fromto(self,k1,k2):
+        if k1 not in self.stateseq:
+            return 0
+        else:
+            from_indices, = np.where(self.stateseq[:-1] == k1) # EXCEPT last
+            return np.sum(stateseq[from_indices+1] == k2)
 
-        def _get_data_withlabel(self,k):
-            return self.data[stateseq == k]
+    def _get_data_withlabel(self,k):
+        return self.data[stateseq == k]
 
-        def _get_occupied(self):
-            return set(self.stateseq)
+    def _get_occupied(self):
+        return set(self.stateseq)
 
 
 # TODO TODO below here
