@@ -7,7 +7,7 @@ from warnings import warn
 
 from pybasicbayes.abstractions import ModelGibbsSampling # TODO import this from parent pyhsmm
 
-import transitions, states
+from internals import transitions, states
 
 class Collapsed(ModelGibbsSampling):
     __metaclass__ = abc.ABCMeta
