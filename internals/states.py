@@ -2,6 +2,9 @@ from __future__ import division
 import numpy as np
 na = np.newaxis
 import numpy.ma as ma
+import itertools
+
+import pdb
 
 from pyhsmm.util.stats import sample_discrete, sample_discrete_from_log
 from pyhsmm.util.general import rle
@@ -13,6 +16,7 @@ from pyhsmm.util.general import rle
 class collapsed_stickyhdphmm_states(object):
     def __init__(self,model,betavec,alpha_0,kappa,obs,data=None,T=None,stateseq=None):
         self.alpha_0 = alpha_0
+        self.kappa = kappa
 
         self.model = model
         self.betavec = betavec
@@ -38,16 +42,17 @@ class collapsed_stickyhdphmm_states(object):
     def _generate(self,T):
         self.T = T
         alpha, kappa = self.alpha_0, self.kappa
-        betavec = self.beta.betavec
-        self.stateseq = stateseq = np.empty(T,dtype=np.int)
+        betavec = self.betavec
+        stateseq = np.zeros(T,dtype=np.int)
         model = self.model
+        self.stateseq = stateseq[:0]
 
         # NOTE: we have a choice of what state to start in; it's just a
         # definition choice that isn't specified in the HDP-HMM
         # Here, we choose just to sample from beta. Note that if this is the
         # first chain being sampled in this model, this will always sample
         # zero, since no states will be occupied.
-        ks = model._get_occupied()
+        ks = list(model._get_occupied() | self._get_occupied())
         betarest = 1-sum(betavec[k] for k in ks)
         scores = np.array([betavec[k] for k in ks] + [betarest])
         firststate = sample_discrete(scores)
@@ -58,22 +63,23 @@ class collapsed_stickyhdphmm_states(object):
 
         # runs a CRF with fixed weights beta forwards
         for t in range(1,T):
-            state = stateseq[t-1]
-            ks = model._get_occupied()
+            self.stateseq = stateseq[:t]
+            ks = list(model._get_occupied() | self._get_occupied())
             betarest = 1-sum(betavec[k] for k in ks)
             # get the counts of new states coming out of our current state
             # going to all other states
-            fromto_counts = np.array([model._get_counts_fromto(state,k) for k in ks])
-            total_from = fromto_counts.sum()
+            fromto_counts = np.array([model._get_counts_fromto(stateseq[t-1],k)
+                                            + self._get_counts_fromto(stateseq[t-1],k)
+                                            for k in ks])
             # for those states plus a new one, sample proportional to
-            # ((alpha+kappa)*beta + fromto) / (alpha+kappa+totalfrom)
-            scores = np.array([((alpha+kappa)*betavec[k] + ft)/(alpha+kappa+total_from)
-                    for ft in fromto_counts] + [((alpha+kappa)*betarest)/(alpha+kappa+total_from)])
-            nextstate = sample_discrete(scores)
-            if nextstate == scores.shape[0]-1:
+            scores = np.array([(alpha*betavec[k] + (kappa if k == stateseq[t-1] else 0) + ft)
+                    for k,ft in zip(ks,fromto_counts)] + [alpha*betarest])
+            nextstateidx = sample_discrete(scores)
+            if nextstateidx == scores.shape[0]-1:
                 stateseq[t] = self._new_label(ks)
             else:
-                stateseq[t] = ks[nextstate]
+                stateseq[t] = ks[nextstateidx]
+        self.stateseq = stateseq
 
     def resample(self):
         model, alpha, betavec = self.model, self.alpha_0, self.betavec
@@ -103,26 +109,20 @@ class collapsed_stickyhdphmm_states(object):
 
         # left transition score
         if t > 0:
-            b = betavec[k]
-            if stateseq[t-1] == k:
-                b += kappa
-            score += np.log( ((alpha+kappa)*b + model._get_counts_fromto(stateseq[t-1],k)) \
-                    / (alpha+kappa+model._get_counts_from(stateseq[t-1])))
+            score += np.log( (alpha*betavec[k] + (kappa if k == stateseq[t-1] else 0)
+                                + model._get_counts_fromto(stateseq[t-1],k))
+                                / (alpha+kappa+model._get_counts_from(stateseq[t-1])) )
 
         # right transition score
         if t < self.T - 1:
-            b = betavec[stateseq[t+1]]
-            if stateseq[t+1] == k:
-                b += kappa
-
             # indicators since we may need to include the left transition in
             # counts (since we are scoring exchangeably, not independently)
-            if t > 0:
-                another_from = 1 if stateseq[t-1] == k else 0
-                another_fromto = 1 if stateseq[t-1] == k and stateseq[t+1] == k else 0
+            another_from = 1 if t > 0 and stateseq[t-1] == k else 0
+            another_fromto = 1 if t > 0 and stateseq[t-1] == k and stateseq[t+1] == k else 0
 
-            score += np.log( ((alpha+kappa)*b + model._get_counts_fromto(k,stateseq[t+1]) + another_fromto) \
-                    / (alpha+kappa+model._counts_from(k) + another_from))
+            score += np.log( (alpha*betavec[stateseq[t+1]] + (kappa if k == stateseq[t-1] else 0)
+                                + model._get_counts_fromto(k,stateseq[t+1]) + another_fromto)
+                                / (alpha+kappa+model._get_counts_from(k) + another_from) )
 
         # observation score
         score += o.log_predictive(data[t],model._get_data_withlabel(k))
@@ -139,8 +139,7 @@ class collapsed_stickyhdphmm_states(object):
         # left transition score
         if t > 0:
             betarest = 1-sum(betavec[k] for k in ks)
-            score += np.log((alpha+kappa)*betarest
-                    /(alpha+kappa+model._get_counts_from(stateseq[t-1])))
+            score += np.log(alpha*betarest/(alpha+kappa+model._get_counts_from(stateseq[t-1])))
 
         # right transition score
         if t < self.T-1:
@@ -149,15 +148,23 @@ class collapsed_stickyhdphmm_states(object):
         # observation score
         score += o.log_marginal_likelihood(data[t])
 
+        return score
+
     def _new_label(self,ks):
         # return a label that isn't already used
-        newlabel = np.random.randint(low=0,high=5*max(ks))
-        while newlabel in ks:
-            newlabel = np.random.randint(low=0,high=5*max(ks))
-        return newlabel
+        # could make this faster because any label can be returned; i can just
+        # produce random ints! for now i do this more readable way #TODO
+        if len(ks) == 0:
+            return 0
+        for i in itertools.count():
+            if i not in ks:
+                return i
 
     def _get_counts_from(self,k):
-        return np.sum(self.stateseq[:-1] == k) # except last!
+        return np.sum(self.stateseq[:-1] == k)
+
+    def _get_counts_to(self,k):
+        return np.sum(self.stateseq[1:] == k)
 
     def _get_counts_fromto(self,k1,k2):
         if k1 not in self.stateseq or k2 not in self.stateseq:
@@ -171,7 +178,7 @@ class collapsed_stickyhdphmm_states(object):
 
 
     def _get_data_withlabel(self,k):
-        return self.data[self.stateseq == k]
+        return np.array(self.data[self.stateseq == k],ndmin=1)
 
     def _get_occupied(self):
         # maybe another bug that np.unique includes masked

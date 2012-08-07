@@ -12,16 +12,20 @@ from internals import transitions, states
 class Collapsed(ModelGibbsSampling):
     __metaclass__ = abc.ABCMeta
 
-    def resample(self):
+    def resample_model(self):
         for s in self.states_list:
             s.resample()
-        self.beta.resample([(k,self._get_counts_from(k)) for k in self._get_occupied()])
+        self.beta.resample([(k,self._get_counts_to(k)) for k in self._get_occupied()])
 
     # statistic gathering methods
 
     def _get_counts_from(self,k):
         # returns an integer
         return sum(s._get_counts_from(k) for s in self.states_list)
+
+    def _get_counts_to(self,k):
+        # returns an integer
+        return sum(s._get_counts_to(k) for s in self.states_list)
 
     def _get_counts_fromto(self,k1,k2):
         # returns an integer
@@ -33,7 +37,7 @@ class Collapsed(ModelGibbsSampling):
 
     def _get_occupied(self):
         # returns a set
-        return reduce(set.union,(s._get_occupied() for s in self.states_list))
+        return reduce(set.union,(s._get_occupied() for s in self.states_list),set([]))
 
     ### optional methods
 
@@ -54,9 +58,10 @@ class collapsed_stickyhdphmm(Collapsed):
 
         self.states_list = []
 
-    def add_data(self,data,**kwargs):
+    def add_data(self,data):
         self.states_list.append(states.collapsed_stickyhdphmm_states(
-            betavec=self.beta.betavec,alpha=self.alpha,kappa=self.kappa,obs=self.obs,data=data,**kwargs))
+            model=self,betavec=self.beta.betavec,alpha_0=self.alpha_0,
+            kappa=self.kappa,obs=self.obs,data=data))
 
     def generate(self,T,keep=True):
         # TODO only works if there's no other data in the model; o/w need to add
