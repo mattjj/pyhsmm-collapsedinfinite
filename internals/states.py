@@ -162,17 +162,17 @@ class collapsed_stickyhdphmm_states(object):
     # masking self.z in resample() makes the _get methods work
 
     def _get_counts_from(self,k):
-        return np.sum(stateseq[:-1] == k) # except last!
+        return np.sum(self.stateseq[:-1] == k) # except last!
 
     def _get_counts_fromto(self,k1,k2):
         if k1 not in self.stateseq:
             return 0
         else:
             from_indices, = np.where(self.stateseq[:-1] == k1) # EXCEPT last
-            return np.sum(stateseq[from_indices+1] == k2)
+            return np.sum(self.stateseq[from_indices+1] == k2)
 
     def _get_data_withlabel(self,k):
-        return self.data[stateseq == k]
+        return self.data[self.stateseq == k]
 
     def _get_occupied(self):
         return set(self.stateseq)
