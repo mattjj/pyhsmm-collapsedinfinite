@@ -20,7 +20,7 @@ plt.title('true states')
 blah = models.collapsed_stickyhdphmm(1,10,75,pybasicbayes.distributions.ScalarGaussianNIX(*obs_hypparams))
 blah.add_data(data)
 
-for itr in progprint_xrange(100):
+for itr in progprint_xrange(200):
     blah.resample_model()
 
 plt.matshow(np.tile(blah.states_list[-1].stateseq,(10,1)))
