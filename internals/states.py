@@ -5,6 +5,7 @@ import numpy.ma as ma
 import itertools
 
 import pdb
+from warnings import warn
 
 from pyhsmm.util.stats import sample_discrete, sample_discrete_from_log
 from pyhsmm.util.general import rle
@@ -187,8 +188,10 @@ class collapsed_stickyhdphmm_states(object):
 
 
 class collapsed_hdphsmm_states(object):
+    # NOTE: every time the state sequence is updated, self.stateseq_norep and
+    # self.durations must be updated. TODO make this happen with an
+    # assignment-to property
     def __init__(self,model,betavec,alpha_0,obs,dur,data=None,T=None,stateseq=None):
-        raise NotImplementedError, 'this class is currently borked'
         self.alpha_0 = alpha_0
 
         self.model = model
@@ -211,6 +214,7 @@ class collapsed_hdphsmm_states(object):
         else:
             assert data.shape[0] == stateseq.shape[0]
             self.stateseq = stateseq
+            self.stateseq_norep, self.durations = rle(stateseq)
             self.data = data
             self.T = data.shape[0]
 
@@ -266,15 +270,43 @@ class collapsed_hdphsmm_states(object):
 
             t += nextstate_dur
 
+        # TODO this has censoring
         self.stateseq = stateseq
-        # NOTE: this has censoring!
+        self.stateseq_norep, self.durations = rle(stateseq)
 
     def _get_durs_withlabel(self,k):
-        stateseq_norep, durs = rle(self.stateseq) # TODO how work with masked?
-        return durs[stateseq_norep == k]
+        if len(self.stateseq) > 0:
+            return self.durations[self.stateseq_norep == k]
+        else:
+            return []
 
     def resample(self):
         self.resample_segment_version()
+
+    def _new_label(self,ks):
+        # return a label that isn't already used
+        # could make this faster because any label can be returned; i can just
+        # produce random ints! for now i do this more readable way #TODO
+        if len(ks) == 0:
+            return 0
+        for i in itertools.count():
+            if i not in ks:
+                return i
+
+    def _get_occupied(self):
+        # maybe another bug that np.unique includes masked
+        return set(self.stateseq) - set((ma.masked,))
+
+    def _get_counts_fromto(self,k1,k2):
+        if k1 not in self.stateseq or k2 not in self.stateseq or k1 == k2:
+            return 0
+        else:
+            stateseq_norep, durs = rle(self.stateseq)
+            from_indices, = np.where(stateseq_norep[:-1] == k1) # EXCEPT last
+            # can't simpler line because of a numpy bug where
+            # np.sum(ma.masked_array([1],mask=[True])) != 0
+            temp = np.sum(stateseq_norep[from_indices+1] == k2)
+            return 0 if ma.is_masked(temp) else temp
 
     ### label sampler stuff
 
@@ -354,6 +386,7 @@ class collapsed_hdphsmm_states(object):
         returns a sequence of length between 1 and 3, where each sequence element is
         ((data,otherdata), (dur,otherdurs))
         '''
+        warn('test this with masked arrays')
         # all the ugly logic is in this method
         # temporarily modifies members, like self.stateseq and maybe self.data
         assert self.stateseq[t] == SAMPLING
@@ -399,6 +432,7 @@ class collapsed_hdphsmm_states(object):
         '''
         returns slices: wholegroup, (piece1, ...)
         '''
+        warn('test this with masked arrays')
         A,B = fill(stateseq,t-1), fill(stateseq,t+1)
         if A == B:
             return A, ((A,stateseq[A.start]),)
