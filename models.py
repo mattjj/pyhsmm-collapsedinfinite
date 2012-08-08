@@ -90,24 +90,52 @@ class collapsed_stickyhdphmm(Collapsed):
 
         return obs, tempstates.stateseq
 
+
 class collapsed_hdphsmm(Collapsed):
-    def __init__(self,gamma,alpha,obs,dur):
-        self.gamma = gamma
-        self.alpha = alpha
+    def __init__(self,gamma_0,alpha_0,obs,dur):
+        self.gamma_0 = gamma_0
+        self.alpha_0 = alpha_0
         self.obs = obs
         self.dur = dur
 
-        self.beta = transitions.beta(gamma=gamma)
+        self.beta = transitions.beta(gamma_0=gamma_0)
 
         self.states_list = []
 
-    def add_data(self,data,**kwargs):
+    def add_data(self,data):
         self.states_list.append(states.collapsed_hdphsmm_states(
-                betavec=self.beta.betavec,alpha=self.alpha,obs=self.obs,dur=self.dur,data=data,**kwargs))
+            model=self,betavec=self.beta.betavec,alpha_0=self.alpha_0,
+            obs=self.obs,dur=self.dur,data=data))
 
     def _get_durs_withlabel(self,k):
         # returns a list of (masked) arrays
         return [s._get_durs_withlabel(k) for s in self.states_list]
+
+    def generate(self,T,keep=True):
+        # TODO only works if there's no other data in the model
+        assert len(self.states_list) == 0
+
+        tempstates = states.collapsed_hdphsmm_states(
+                T=T,model=self,betavec=self.beta.betavec,alpha_0=self.alpha_0,
+                obs=self.obs,dur=self.dur)
+
+        used_states = np.bincount(tempstates.stateseq)
+
+        allobs = []
+        for state,count in enumerate(used_states):
+            self.obs.resample()
+            allobs.append([self.obs.rvs(1) for itr in range(count)])
+
+        obs = []
+        for state in tempstates.stateseq:
+            obs.append(allobs[state].pop())
+        obs = np.concatenate(obs)
+
+        if keep:
+            tempstates.data = obs
+            self.states_list.append(tempstates)
+
+        return obs, tempstates.stateseq
 
 
 # TODO methods to convert to/from weak limit representations

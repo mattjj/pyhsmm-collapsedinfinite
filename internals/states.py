@@ -32,6 +32,7 @@ class collapsed_stickyhdphmm_states(object):
             self.T = stateseq.shape[0]
             self.stateseq = stateseq
         elif stateseq is None:
+            self.data = data
             self._generate(data.shape[0])
         else:
             assert data.shape[0] == stateseq.shape[0]
@@ -52,7 +53,7 @@ class collapsed_stickyhdphmm_states(object):
         # Here, we choose just to sample from beta. Note that if this is the
         # first chain being sampled in this model, this will always sample
         # zero, since no states will be occupied.
-        ks = list(model._get_occupied() | self._get_occupied())
+        ks = list(model._get_occupied())
         betarest = 1-sum(betavec[k] for k in ks)
         scores = np.array([betavec[k] for k in ks] + [betarest])
         firststate = sample_discrete(scores)
@@ -185,99 +186,95 @@ class collapsed_stickyhdphmm_states(object):
         return set(self.stateseq) - set((ma.masked,))
 
 
-# TODO TODO below here
-
-class collapsed_hdphsmm_states(object): # TODO this class is broken!
-    def __init__(self,model,betavec,alpha,obsclass,durclass,data=None,T=None,stateseq=None):
+class collapsed_hdphsmm_states(object):
+    def __init__(self,model,betavec,alpha_0,obs,dur,data=None,T=None,stateseq=None):
         raise NotImplementedError, 'this class is currently borked'
-        self.alpha = alpha
+        self.alpha_0 = alpha_0
 
         self.model = model
         self.betavec = betavec # infinite vector
-        self.obsclass = obsclass
-        self.durclass = durclass
+        self.obs = obs
+        self.dur = dur
 
         self.data = data
 
         if (data,stateseq) == (None,None):
             # generating
             assert T is not None, 'must pass in T when generating'
-            self.T = T
-            self.generate()
+            self._generate(T)
         elif data is None:
             self.T = stateseq.shape[0]
             self.stateseq = stateseq
-            self.generate_obs()
         elif stateseq is None:
-            self.T = data.shape[0]
             self.data = data
-            self.generate_states()
+            self._generate(data.shape[0])
         else:
             assert data.shape[0] == stateseq.shape[0]
             self.stateseq = stateseq
             self.data = data
             self.T = data.shape[0]
 
-    def resample(self):
-        self.resample_segment_version()
+    def _generate(self,T):
+        self.T = T
+        alpha = self.alpha_0
+        betavec = self.betavec
+        stateseq = np.zeros(T,dtype=np.int)
+        model = self.model
+        self.stateseq = stateseq[:0]
 
-    def _get_counts_from(self,k):
-        return self.__get_counts_from(self.stateseq,k)
+        # NOTE: we have a choice of what state to start in; it's just a
+        # definition choice that isn't specified in the HDP-HMM
+        # Here, we choose just to sample from beta. Note that if this is the
+        # first chain being sampled in this model, this will always sample
+        # zero, since no states will be occupied.
+        ks = list(model._get_occupied())
+        betarest = 1-sum(betavec[k] for k in ks)
+        scores = np.array([betavec[k] for k in ks] + [betarest])
+        firststateidx = sample_discrete(scores)
+        if firststateidx == scores.shape[0]-1:
+            firststate = self._new_label(ks)
+        else:
+            firststate = ks[firststateidx]
 
-    def _get_counts_fromto(self,k1,k2):
-        return self.__get_counts_fromto(self.stateseq,k1,k2)
+        self.dur.resample(model._get_durs_withlabel(firststate) + self._get_durs_withlabel(firststate))
+        firststate_dur = self.dur.rvs(1)
 
-    def _get_data_withlabel(self,k):
-        return self.__get_data_withlabel(self.stateseq,self.data,k)
+        stateseq[0:firststate_dur] = firststate
+        t = firststate_dur
+
+        # run a family-CRF (CRF with durations) forwards
+        while t < self.T:
+            self.stateseq = stateseq[:t]
+            ks = list(model._get_occupied() | self._get_occupied())
+            betarest = 1-sum(betavec[k] for k in ks)
+            fromto_counts = np.array([model._get_counts_fromto(stateseq[t-1],k)
+                                            + self._get_counts_fromto(stateseq[t-1],k)
+                                            for k in ks])
+            scores = np.array([(alpha*betavec[k] + ft if k != stateseq[t-1] else 0)
+                    for k,ft in zip(ks,fromto_counts)] + [alpha*betarest])
+            nextstateidx = sample_discrete(scores)
+            if nextstateidx == scores.shape[0]-1:
+                nextstate = self._new_label(ks)
+            else:
+                nextstate = ks[nextstateidx]
+
+            # now get the duration of nextstate!
+            self.dur.resample(model._get_durs_withlabel(nextstate) + self._get_durs_withlabel(nextstate))
+            nextstate_dur = self.dur.rvs(1)
+
+            stateseq[t:t+nextstate_dur] = nextstate
+
+            t += nextstate_dur
+
+        self.stateseq = stateseq
+        # NOTE: this has censoring!
 
     def _get_durs_withlabel(self,k):
-        return self.__get_durs_withlabel(self.stateseq,k)
-
-    @classmethod
-    def __get_counts_from(cls,stateseq,k):
-        stateseq_norep = get_norep(stateseq)[:-1] # EXCEPT last
-        rawcount = np.sum(stateseq_norep == k)
-        if SAMPLING in stateseq_norep:
-            sampling_index, = np.where(stateseq_norep == SAMPLING)
-            if sampling_index > 0 and stateseq[sampling_index-1] == k:
-                return rawcount - 1
-        return rawcount
-
-    @classmethod
-    def __get_counts_fromto(cls,stateseq,k1,k2):
-        if k1 not in stateseq:
-            return 0
-        else:
-            stateseq_norep = get_norep(stateseq)
-            from_indices, = np.where(stateseq_norep[:-1] == k1) # EXCEPT last
-            return np.sum(stateseq_norep[from_indices + 1] == k2)
-
-    @classmethod
-    def __get_data_withlabel(cls,stateseq,data,k):
-        return data[stateseq == k]
-
-    @classmethod
-    def __get_durs_withlabel(cls,stateseq,k):
-        stateseq_norep, durs = rle(stateseq)
+        stateseq_norep, durs = rle(self.stateseq) # TODO how work with masked?
         return durs[stateseq_norep == k]
 
-    def _get_occupied(self,stateseq):
-        return set(self.stateseq)
-
-    def _new_label(self,ks): # TODO this should be in transitions
-        # sample beta conditioned on finding a new label
-        beta = self.betavec
-
-        betanew = 1.-sum(beta[k] for k in ks)
-
-        i = -1 # incremented at least once
-        prob = np.random.rand() * betanew
-        while prob > 0:
-            if i not in ks:
-                prob -= self.betavec[i]
-            i += 1
-
-        return i
+    def resample(self):
+        self.resample_segment_version()
 
     ### label sampler stuff
 
@@ -295,7 +292,6 @@ class collapsed_hdphsmm_states(object): # TODO this class is broken!
                 self.stateseq[t] = newlabel
             else:
                 self.stateseq[t] = self._new_label(ks)
-
 
     def _label_score(self,t,k):
         score = 1.
