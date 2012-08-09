@@ -5,10 +5,10 @@ from matplotlib import pyplot as plt
 import models, pybasicbayes
 from pymattutil.text import progprint_xrange
 
-obs_hypparams = (0.,0.01,2.,3.)
+obs_hypparams = (0.,0.01,1.,10)
 
-blah = models.collapsed_stickyhdphmm(2,10,50,pybasicbayes.distributions.ScalarGaussianNIX(*obs_hypparams))
-data, truestates = blah.generate(50)
+blah = models.collapsed_stickyhdphmm(3,10,20,pybasicbayes.distributions.ScalarGaussianNIX(*obs_hypparams))
+data, truestates = blah.generate(100)
 
 plt.figure()
 plt.plot(data)
@@ -17,13 +17,13 @@ plt.title('data')
 plt.matshow(np.tile(truestates,(10,1)))
 plt.title('true states')
 
-blah = models.collapsed_stickyhdphmm(1,10,75,pybasicbayes.distributions.ScalarGaussianNIX(*obs_hypparams))
+blah = models.collapsed_stickyhdphmm(3,10,20,pybasicbayes.distributions.ScalarGaussianNIX(*obs_hypparams))
 blah.add_data(data)
 
-for itr in progprint_xrange(200):
+for itr in progprint_xrange(500):
     blah.resample_model()
 
 plt.matshow(np.tile(blah.states_list[-1].stateseq,(10,1)))
-plt.title('after some resampling')
+plt.title('after laborious resampling')
 
 plt.show()

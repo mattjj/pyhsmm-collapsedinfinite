@@ -3,9 +3,12 @@ import numpy as np
 na = np.newaxis
 from matplotlib import pyplot as plt
 import abc
-from warnings import warn
+from collections import defaultdict
 
-from pybasicbayes.abstractions import ModelGibbsSampling # TODO import this from parent pyhsmm
+from warnings import warn
+import pdb
+
+from pybasicbayes.abstractions import ModelGibbsSampling
 
 from internals import transitions, states
 
@@ -15,29 +18,29 @@ class Collapsed(ModelGibbsSampling):
     def resample_model(self):
         for s in self.states_list:
             s.resample()
-        self.beta.resample([(k,self._get_counts_to(k)) for k in self._get_occupied()])
+        self.beta.resample([(k,self._counts_to(k)) for k in self._occupied()])
 
     # statistic gathering methods
 
-    def _get_counts_from(self,k):
+    def _counts_from(self,k):
         # returns an integer
-        return sum(s._get_counts_from(k) for s in self.states_list)
+        return sum(s._counts_from(k) for s in self.states_list)
 
-    def _get_counts_to(self,k):
+    def _counts_to(self,k):
         # returns an integer
-        return sum(s._get_counts_to(k) for s in self.states_list)
+        return sum(s._counts_to(k) for s in self.states_list)
 
-    def _get_counts_fromto(self,k1,k2):
+    def _counts_fromto(self,k1,k2):
         # returns an integer
-        return sum(s._get_counts_fromto(k1,k2) for s in self.states_list)
+        return sum(s._counts_fromto(k1,k2) for s in self.states_list)
 
-    def _get_data_withlabel(self,k):
+    def _data_withlabel(self,k):
         # returns a list of (masked) arrays
-        return [s._get_data_withlabel(k) for s in self.states_list]
+        return [s._data_withlabel(k) for s in self.states_list]
 
-    def _get_occupied(self):
+    def _occupied(self):
         # returns a set
-        return reduce(set.union,(s._get_occupied() for s in self.states_list),set([]))
+        return reduce(set.union,(s._occupied() for s in self.states_list),set([]))
 
     ### optional methods
 
@@ -60,7 +63,7 @@ class collapsed_stickyhdphmm(Collapsed):
 
     def add_data(self,data):
         self.states_list.append(states.collapsed_stickyhdphmm_states(
-            model=self,betavec=self.beta.betavec,alpha_0=self.alpha_0,
+            model=self,beta=self.beta,alpha_0=self.alpha_0,
             kappa=self.kappa,obs=self.obs,data=data))
 
     def generate(self,T,keep=True):
@@ -69,7 +72,7 @@ class collapsed_stickyhdphmm(Collapsed):
         assert len(self.states_list) == 0
 
         tempstates = states.collapsed_stickyhdphmm_states(
-                T=T,model=self,betavec=self.beta.betavec,alpha_0=self.alpha_0,
+                T=T,model=self,beta=self.beta,alpha_0=self.alpha_0,
                 kappa=self.kappa,obs=self.obs)
 
         used_states = np.bincount(tempstates.stateseq)
@@ -104,27 +107,29 @@ class collapsed_hdphsmm(Collapsed):
 
     def add_data(self,data):
         self.states_list.append(states.collapsed_hdphsmm_states(
-            model=self,betavec=self.beta.betavec,alpha_0=self.alpha_0,
+            model=self,beta=self.beta,alpha_0=self.alpha_0,
             obs=self.obs,dur=self.dur,data=data))
 
-    def _get_durs_withlabel(self,k):
+    def _durs_withlabel(self,k):
         # returns a list of (masked) arrays
-        return [s._get_durs_withlabel(k) for s in self.states_list]
+        return [s._durs_withlabel(k) for s in self.states_list]
 
     def generate(self,T,keep=True):
         # TODO only works if there's no other data in the model
         assert len(self.states_list) == 0
 
         tempstates = states.collapsed_hdphsmm_states(
-                T=T,model=self,betavec=self.beta.betavec,alpha_0=self.alpha_0,
+                T=T,model=self,beta=self.beta,alpha_0=self.alpha_0,
                 obs=self.obs,dur=self.dur)
 
-        used_states = np.bincount(tempstates.stateseq)
+        used_states = defaultdict(lambda: 0)
+        for state in tempstates.stateseq:
+            used_states[state] += 1
 
-        allobs = []
-        for state,count in enumerate(used_states):
+        allobs = {}
+        for state,count in used_states.items():
             self.obs.resample()
-            allobs.append([self.obs.rvs(1) for itr in range(count)])
+            allobs[state] = [self.obs.rvs(1) for itr in range(count)]
 
         obs = []
         for state in tempstates.stateseq:
