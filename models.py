@@ -2,13 +2,14 @@ from __future__ import division
 import numpy as np
 na = np.newaxis
 from matplotlib import pyplot as plt
+from matplotlib import cm
 import abc
 from collections import defaultdict
 
 from warnings import warn
-import pdb
 
 from pybasicbayes.abstractions import ModelGibbsSampling
+from pymattutil.general import rle
 
 from internals import transitions, states
 
@@ -44,11 +45,29 @@ class Collapsed(ModelGibbsSampling):
 
     ### optional methods
 
-    def plot(self,*args,**kwargs):
-        warn('using temporary implementation of plot') # TODO
-        for s in self.states_list:
-            plt.matshow(np.tile(s.stateseq,(s.stateseq//10,1)))
+    def plot(self,color=None):
+        import itertools
+        num_states = len(self._occupied())
+        state_colors = {}
+        idx = 0
+        for state in itertools.chain(*[s.stateseq for s in self.states_list]):
+            if state not in state_colors:
+                state_colors[state] = idx/(num_states-1) if color is None else color
+                idx += 1
+        cmap = cm.get_cmap()
 
+        for s in self.states_list:
+            plt.figure()
+            ### obs stuff
+            # plt.subplot(2,1,1)
+            # for state in rle(s.stateseq)[0]:
+            #     self.obs.plot(color=cmap(state_colors[state]),
+            #             data=s.data[s.stateseq==state] if s.data is not None else None,
+            #             plot_params=False)
+            # plt.subplot(2,1,2)
+
+            ### states stuff
+            s.plot(colors_dict=state_colors)
 
 class collapsed_stickyhdphmm(Collapsed):
     def __init__(self,gamma_0,alpha_0,kappa,obs):
@@ -105,10 +124,10 @@ class collapsed_hdphsmm(Collapsed):
 
         self.states_list = []
 
-    def add_data(self,data):
+    def add_data(self,data,stateseq=None):
         self.states_list.append(states.collapsed_hdphsmm_states(
             model=self,beta=self.beta,alpha_0=self.alpha_0,
-            obs=self.obs,dur=self.dur,data=data))
+            obs=self.obs,dur=self.dur,data=data,stateseq=stateseq))
 
     def _durs_withlabel(self,k):
         # returns a list of (masked) arrays
@@ -141,6 +160,17 @@ class collapsed_hdphsmm(Collapsed):
             self.states_list.append(tempstates)
 
         return obs, tempstates.stateseq
+
+    def resample_model_superstates(self):
+        for s in self.states_list:
+            s.resample_superstate_version()
+        self.beta.resample([(k,self._counts_to(k)) for k in self._occupied()])
+
+    def resample_model_labels(self):
+        for s in self.states_list:
+            s.resample_label_version()
+        self.beta.resample([(k,self._counts_to(k)) for k in self._occupied()])
+
 
 
 # TODO methods to convert to/from weak limit representations

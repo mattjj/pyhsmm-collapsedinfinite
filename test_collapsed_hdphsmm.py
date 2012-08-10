@@ -9,9 +9,7 @@ import models, pybasicbayes
 from pymattutil.text import progprint_xrange
 
 obs_hypparams = (0.,0.1,1.,10)
-dur_hypparams = (20*5,20)
-
-plt.figure()
+dur_hypparams = (5*5,5)
 
 if os.path.isfile('data'):
     with open('data','r') as infile:
@@ -22,7 +20,7 @@ if os.path.isfile('data'):
         data, truestates, initialization = thetuple
 else:
     while True:
-        blah = models.collapsed_hdphsmm(4,10,obs=pybasicbayes.distributions.ScalarGaussianNIX(*obs_hypparams),dur=pybasicbayes.distributions.PoissonDuration(*dur_hypparams))
+        blah = models.collapsed_1dphsmm(2,10,obs=pybasicbayes.distributions.ScalarGaussianNIX(*obs_hypparams),dur=pybasicbayes.distributions.PoissonDuration(*dur_hypparams))
         data, truestates = blah.generate(40)
 
         plt.close('all')
@@ -35,13 +33,23 @@ else:
         if 'y' == raw_input('proceed? ').lower():
             break
 
-blah = models.collapsed_hdphsmm(4,10,obs=pybasicbayes.distributions.ScalarGaussianNIX(*obs_hypparams),dur=pybasicbayes.distributions.PoissonDuration(*dur_hypparams))
+blah = models.collapsed_hdphsmm(2,10,obs=pybasicbayes.distributions.ScalarGaussianNIX(*obs_hypparams),dur=pybasicbayes.distributions.PoissonDuration(*dur_hypparams))
 blah.add_data(data,stateseq=initialization)
 
-for itr in progprint_xrange(20):
-    blah.resample_model()
+allnums = []
+for itr in progprint_xrange(3000):
+    blah.resample_model_superstates()
+    # blah.resample_model_labels()
+    allnums.append(len(set(blah.states_list[0].stateseq)))
 
-plt.matshow(np.tile(blah.states_list[-1].stateseq,(10,1)))
-plt.title('after laborious resampling')
+# plt.matshow(np.tile(blah.states_list[-1].stateseq,(10,1)))
+# plt.title('after laborious resampling')
+
+nums = np.bincount(allnums)
+plt.figure()
+plt.stem(np.arange(len(nums)),nums)
+
+plt.figure()
+plt.plot(allnums)
 
 plt.show()

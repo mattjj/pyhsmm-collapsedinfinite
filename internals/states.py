@@ -4,8 +4,6 @@ na = np.newaxis
 import collections, itertools
 from copy import copy
 
-import pdb
-
 from pymattutil.stats import sample_discrete, sample_discrete_from_log, combinedata
 from pymattutil.general import rle as rle
 import pyhsmm
@@ -235,6 +233,21 @@ class collapsed_hdphsmm_states(object):
             self.data = data
             self.T = data.shape[0]
 
+    def plot(self,colors_dict):
+        from matplotlib import pyplot as plt
+        stateseq_norep, durations = rle(self.stateseq)
+        X,Y = np.meshgrid(np.hstack((0,durations.cumsum())),(0,1))
+
+        if colors_dict is not None:
+            C = np.array([[colors_dict[state] for state in stateseq_norep]])
+        else:
+            C = stateseq_norep[na,:]
+
+        plt.pcolor(X,Y,C,vmin=0,vmax=1)
+        plt.ylim((0,1))
+        plt.xlim((0,len(self.stateseq)))
+        plt.yticks([])
+
     def _generate(self,T):
         alpha = self.alpha_0
         betavec = self.beta.betavec
@@ -340,8 +353,9 @@ class collapsed_hdphsmm_states(object):
         for t in np.random.permutation(self.T):
             # throw out old value (flag used in count methods)
             self.stateseq[t] = SAMPLING
-            ks = list(self.model._occupied())
+            ks = self.model._occupied()
             self.beta.housekeeping(ks)
+            ks = list(ks)
 
             # sample a new value
             scores = np.array([self._label_score(t,k) for k in ks] + [self._new_label_score(t,ks)])
@@ -390,7 +404,7 @@ class collapsed_hdphsmm_states(object):
 
         # compute betanew (aka betarest), this line is the main reason this is a
         # separate method from _label_score
-        betanew = 1.-sum(beta[k] for k in ks)
+        betanew = self.beta.remaining
 
         # left transition (only from counts)
         if t > 0:
@@ -462,34 +476,29 @@ class collapsed_hdphsmm_states(object):
     # TODO to initialize, can try running a mixture model to get instantiated
     # hsmm components, then sample a stateseq given those components
 
-    # TODO TODO should show a situation where there's uncertainty in number of
-    # states because two levels are similar, then super state sampler should
-    # really win
-
     def resample_superstate_version(self):
         self.stateseq = np.array(self.stateseq,dtype=int)
         ### run a few super-state sampling sweeps
-        self.stateseq_norep, self.durations = rle(self.stateseq)
-        self.starts = starts = np.concatenate(((0,),self.durations.cumsum()))[:-1]
-        self.ends = ends = starts + self.durations
-        Tblock = self.stateseq_norep.shape[0]
+        stateseq_norep, durations = rle(self.stateseq)
+        self.starts = starts = np.concatenate(((0,),durations.cumsum()))[:-1]
+        self.ends = ends = starts + durations
+        Tblock = len(durations)
 
-        for itr in range(5):
-            for t in np.random.permutation(Tblock):
-                self.stateseq[starts[t]:ends[t]] = SAMPLING
-                ks = list(self.model._occupied())
-                self.beta.housekeeping(ks)
+        for t in np.random.permutation(Tblock):
+            self.stateseq[starts[t]:ends[t]] = SAMPLING
+            ks = list(self.model._occupied())
+            self.beta.housekeeping(ks)
 
-                # sample a new value
-                scores = np.array([self._superstate_score(t,k) for k in ks] + [self._new_superstate_score(t,ks)])
+            # sample a new value
+            scores = np.array([self._superstate_score(t,k) for k in ks]
+                    + [self._new_superstate_score(t,ks)])
 
-                pdb.set_trace()
+            newstateidx = sample_discrete_from_log(scores)
+            if newstateidx == scores.shape[0]-1:
+                self.stateseq[starts[t]:ends[t]] = self._new_label(ks)
+            else:
+                self.stateseq[starts[t]:ends[t]] = ks[newstateidx]
 
-                newstateidx = sample_discrete_from_log(scores)
-                if newstateidx == scores.shape[0]-1:
-                    self.stateseq[starts[t]:ends[t]] = self._new_label(ks)
-                else:
-                    self.stateseq[starts[t]:ends[t]] = ks[newstateidx]
 
         ### instantiate a finite left-to-right hsmm to resample the boundaries
         # map the statesequence labels to the canonical ordering
@@ -502,17 +511,20 @@ class collapsed_hdphsmm_states(object):
             o.resample(self.model._data_withlabel(unmapping[newlabel]))
             d.resample(self.model._durs_withlabel(unmapping[newlabel]))
 
-        # TODO remove
-        for d in dur_distns:
-            d.log_pmf = d.log_likelihood
+
+        extra_obs = [copy(self.obs) for r in range(NUM_EXTRA)]
+        extra_dur = [copy(self.dur) for r in range(NUM_EXTRA)]
+        for o,d in zip(extra_obs,extra_dur):
+            o.resample()
+            d.resample()
 
         stateseq_norep, _ = rle(stateseq)
         N = len(stateseq_norep) + NUM_EXTRA
         finite_hsmm_states = pyhsmm.internals.states.hsmm_states_python(
                 len(self.stateseq),
                 N,
-                [obs_distns[s] for s in stateseq_norep] + [copy(self.obs) for r in range(NUM_EXTRA)],
-                [dur_distns[s] for s in stateseq_norep] + [copy(self.dur) for r in range(NUM_EXTRA)],
+                [obs_distns[s] for s in stateseq_norep] + extra_obs,
+                [dur_distns[s] for s in stateseq_norep] + extra_dur,
                 dummytrans(A=np.eye(N,N,1)),
                 pyhsmm.internals.initial_state.start_zero(N),
                 data=self.data) # instantiating will call resample once
@@ -531,7 +543,8 @@ class collapsed_hdphsmm_states(object):
 
     def _superstate_score(self,tblock,k):
         score = 0.
-        stateseq_norep, durations, data = self.stateseq_norep, self.durations, self.data
+        stateseq_norep, durations = rle(self.stateseq)
+        data = self.data
         obs, dur = self.obs, self.dur
         model = self.model
         alpha = self.alpha_0
@@ -554,7 +567,7 @@ class collapsed_hdphsmm_states(object):
                     - np.log(alpha*(1-beta[k]) + model._counts_from(k))
 
         score += obs.log_predictive(data[start:end],model._data_withlabel(k)) \
-                + dur.log_predictive(durations[tblock],model._durs_withlabel(k)) # TODO temperature
+                + dur.log_predictive(durations[tblock],model._durs_withlabel(k))
 
         return score
 
@@ -562,13 +575,14 @@ class collapsed_hdphsmm_states(object):
         score = 0.
 
         beta = self.beta.betavec
-        stateseq_norep, durations, data = self.stateseq_norep, self.durations, self.data
+        stateseq_norep, durations = rle(self.stateseq)
+        data = self.data
         alpha = self.alpha_0
         model = self.model
         obs, dur = self.obs, self.dur
         start, end = self.starts[tblock], self.ends[tblock]
 
-        betanew = 1.-sum(beta[k] for k in ks)
+        betanew = self.beta.remaining
 
         if tblock > 0:
             score += np.log(alpha) + np.log(betanew) \
