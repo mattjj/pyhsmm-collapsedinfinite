@@ -3,6 +3,7 @@ import numpy as np
 na = np.newaxis
 import collections, itertools
 from copy import copy
+import abc
 
 from pymattutil.stats import sample_discrete, sample_discrete_from_log, combinedata
 from pymattutil.general import rle as rle
@@ -24,6 +25,60 @@ ABIGNUMBER = 10000 # state labels are sampled uniformly from 0 to abignumber exc
 # for now, i'll just make sure outside that anything that sets self.stateseq
 # also sets self.stateseq_norep and self.durations
 # it should also call beta updates...
+
+class collapsed_states(object):
+    __metaclass__ = abc.ABCMeta
+
+    @abc.abstractmethod
+    def resample(self):
+        pass
+
+    @abc.abstractmethod
+    def generate(self):
+        pass
+
+    @abc.abstractmethod
+    def _counts_from(self,k):
+        pass
+
+    @abc.abstractmethod
+    def _counts_to(self,k):
+        pass
+
+    @abc.abstractmethod
+    def _counts_fromto(self,k):
+        pass
+
+    def _new_label(self,ks):
+        assert SAMPLING not in ks
+        newlabel = np.random.randint(ABIGNUMBER)
+        while newlabel in ks:
+            newlabel = np.random.randint(ABIGNUMBER)
+        newweight = self.beta.betavec[newlabel] # instantiate, needed if new state at beginning of seq
+        return newlabel
+
+    def _data_withlabel(self,k):
+        assert k != SAMPLING
+        return self.data[self.stateseq == k]
+
+    def _occupied(self):
+        return set(self.stateseq) - set((SAMPLING,))
+
+    def plot(self,colors_dict):
+        from matplotlib import pyplot as plt
+        stateseq_norep, durations = rle(self.stateseq)
+        X,Y = np.meshgrid(np.hstack((0,durations.cumsum())),(0,1))
+
+        if colors_dict is not None:
+            C = np.array([[colors_dict[state] for state in stateseq_norep]])
+        else:
+            C = stateseq_norep[na,:]
+
+        plt.pcolor(X,Y,C,vmin=0,vmax=1)
+        plt.ylim((0,1))
+        plt.xlim((0,len(self.stateseq)))
+        plt.yticks([])
+
 
 class collapsed_stickyhdphmm_states(object):
     def __init__(self,model,beta,alpha_0,kappa,obs,data=None,T=None,stateseq=None):
@@ -161,13 +216,6 @@ class collapsed_stickyhdphmm_states(object):
 
         return score
 
-    def _new_label(self,ks):
-        assert SAMPLING not in ks
-        newlabel = np.random.randint(ABIGNUMBER)
-        while newlabel in ks:
-            newlabel = np.random.randint(ABIGNUMBER)
-        return newlabel
-
     def _counts_from(self,k):
         assert k != SAMPLING
         assert np.sum(self.stateseq == SAMPLING) in (0,1)
@@ -193,13 +241,6 @@ class collapsed_stickyhdphmm_states(object):
         else:
             from_indices, = np.where(self.stateseq[:-1] == k1) # EXCEPT last
             return np.sum(self.stateseq[from_indices+1] == k2)
-
-    def _data_withlabel(self,k):
-        assert k != SAMPLING
-        return np.array(self.data[self.stateseq == k],ndmin=1)
-
-    def _occupied(self):
-        return set(self.stateseq) - set((SAMPLING,))
 
 
 class collapsed_hdphsmm_states(object):
@@ -232,21 +273,6 @@ class collapsed_hdphsmm_states(object):
             self.stateseq_norep, self.durations = rle(stateseq)
             self.data = data
             self.T = data.shape[0]
-
-    def plot(self,colors_dict):
-        from matplotlib import pyplot as plt
-        stateseq_norep, durations = rle(self.stateseq)
-        X,Y = np.meshgrid(np.hstack((0,durations.cumsum())),(0,1))
-
-        if colors_dict is not None:
-            C = np.array([[colors_dict[state] for state in stateseq_norep]])
-        else:
-            C = stateseq_norep[na,:]
-
-        plt.pcolor(X,Y,C,vmin=0,vmax=1)
-        plt.ylim((0,1))
-        plt.xlim((0,len(self.stateseq)))
-        plt.yticks([])
 
     def _generate(self,T):
         alpha = self.alpha_0
@@ -305,20 +331,6 @@ class collapsed_hdphsmm_states(object):
             return durations[stateseq_norep == k]
         else:
             return []
-
-    def _data_withlabel(self,k):
-        assert k != SAMPLING
-        return self.data[self.stateseq == k]
-
-    def _new_label(self,ks):
-        assert SAMPLING not in ks
-        newlabel = np.random.randint(ABIGNUMBER)
-        while newlabel in ks:
-            newlabel = np.random.randint(ABIGNUMBER)
-        return newlabel
-
-    def _occupied(self):
-        return set(self.stateseq) - set((SAMPLING,))
 
     def _counts_fromto(self,k1,k2):
         assert k1 != SAMPLING and k2 != SAMPLING
@@ -472,9 +484,6 @@ class collapsed_hdphsmm_states(object):
             return slice(A.start,B.stop), [(x,stateseq[x.start]) for x in (A,It,B) if x.stop - x.start > 0]
 
     ### super-state sampler stuff
-
-    # TODO to initialize, can try running a mixture model to get instantiated
-    # hsmm components, then sample a stateseq given those components
 
     def resample_superstate_version(self):
         self.stateseq = np.array(self.stateseq,dtype=int)
