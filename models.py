@@ -19,7 +19,7 @@ class Collapsed(ModelGibbsSampling):
     def resample_model(self):
         for s in self.states_list:
             s.resample()
-        self.beta.resample([(k,self._counts_to(k)) for k in self._occupied()])
+        self.beta.resample()
 
     # statistic gathering methods
 
@@ -76,7 +76,7 @@ class collapsed_stickyhdphmm(Collapsed):
         self.kappa = kappa
         self.obs = obs
 
-        self.beta = transitions.beta(gamma_0=gamma_0)
+        self.beta = transitions.beta(model=self,gamma_0=gamma_0)
 
         self.states_list = []
 
@@ -120,7 +120,7 @@ class collapsed_hdphsmm(Collapsed):
         self.obs = obs
         self.dur = dur
 
-        self.beta = transitions.censored_beta(gamma_0=gamma_0)
+        self.beta = transitions.censored_beta(model=self,gamma_0=gamma_0)
 
         self.states_list = []
 
@@ -164,12 +164,12 @@ class collapsed_hdphsmm(Collapsed):
     def resample_model_superstates(self):
         for s in self.states_list:
             s.resample_superstate_version()
-        self.beta.resample([(k,self._counts_to(k)) for k in self._occupied()])
+        self.beta.resample()
 
     def resample_model_labels(self):
         for s in self.states_list:
             s.resample_label_version()
-        self.beta.resample([(k,self._counts_to(k)) for k in self._occupied()])
+        self.beta.resample()
 
 
 

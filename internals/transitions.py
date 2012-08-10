@@ -15,9 +15,12 @@ class beta(object):
         n = self._get_countmatrix(ks)
 
         # m auxiliary variables (from original HDP paper, sec 5.3)
+        # essentially samples a number of tables with each dish assignment in
+        # each restaurant by running a CRP forward (just sampling whether a new
+        # table was started)
         msum = np.zeros(len(ks))
         for (i,j), nij in np.ndenumerate(n):
-            for x in range(nij):
+            for x in np.arange(nij):
                 msum[j] += np.random.random() < self.gamma_0 * self.betavec[ks[j]] \
                             / (x + self.gamma_0 * self.betavec[ks[j]])
 
@@ -52,12 +55,13 @@ class beta(object):
             piece, self.remaining = p*self.remaining, (1-p)*self.remaining
             yield piece
 
+
 class censored_beta(beta):
     def _get_countmatrix(self,ks):
         counts = super(censored_beta,self)._get_countmatrix(ks)
         assert np.all(np.diag(counts) == 0)
         counts_from = counts.sum(1)
-        for i in range(counts.shape[0]):
+        for i in np.arange(counts.shape[0]):
             pi_ii = np.random.beta(1,self.gamma)
             counts[i,i] = np.random.geometric(1-pi_ii,size=counts_from[i]).sum()
         return counts
