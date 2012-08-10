@@ -5,6 +5,7 @@ import collections, itertools
 from copy import copy
 import abc
 
+# TODO change pymattutil to pyhsmm.util
 from pymattutil.stats import sample_discrete, sample_discrete_from_log, combinedata
 from pymattutil.general import rle as rle
 import pyhsmm
@@ -31,10 +32,6 @@ class collapsed_states(object):
 
     @abc.abstractmethod
     def resample(self):
-        pass
-
-    @abc.abstractmethod
-    def generate(self):
         pass
 
     @abc.abstractmethod
@@ -80,7 +77,7 @@ class collapsed_states(object):
         plt.yticks([])
 
 
-class collapsed_stickyhdphmm_states(object):
+class collapsed_stickyhdphmm_states(collapsed_states):
     def __init__(self,model,beta,alpha_0,kappa,obs,data=None,T=None,stateseq=None):
         self.alpha_0 = alpha_0
         self.kappa = kappa
@@ -243,7 +240,7 @@ class collapsed_stickyhdphmm_states(object):
             return np.sum(self.stateseq[from_indices+1] == k2)
 
 
-class collapsed_hdphsmm_states(object):
+class collapsed_hdphsmm_states(collapsed_states):
     def __init__(self,model,beta,alpha_0,obs,dur,data=None,T=None,stateseq=None):
         self.alpha_0 = alpha_0
 

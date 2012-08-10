@@ -120,7 +120,7 @@ class collapsed_hdphsmm(Collapsed):
         self.obs = obs
         self.dur = dur
 
-        self.beta = transitions.beta(gamma_0=gamma_0)
+        self.beta = transitions.censored_beta(gamma_0=gamma_0)
 
         self.states_list = []
 

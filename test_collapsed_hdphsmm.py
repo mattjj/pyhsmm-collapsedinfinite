@@ -37,9 +37,9 @@ blah = models.collapsed_hdphsmm(2,10,obs=pybasicbayes.distributions.ScalarGaussi
 blah.add_data(data,stateseq=initialization)
 
 allnums = []
-for itr in progprint_xrange(3000):
-    blah.resample_model_superstates()
-    # blah.resample_model_labels()
+for itr in progprint_xrange(10000):
+    # blah.resample_model_superstates()
+    blah.resample_model_labels()
     allnums.append(len(set(blah.states_list[0].stateseq)))
 
 # plt.matshow(np.tile(blah.states_list[-1].stateseq,(10,1)))
