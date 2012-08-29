@@ -32,9 +32,9 @@ class beta(object):
 
     def _get_countmatrix(self,ks):
         counts = np.zeros((len(ks),len(ks)))
-        for i in ks:
-            for j in ks:
-                counts[i,j] = self.model._counts_fromto(i,j)
+        for i,ki in enumerate(ks):
+            for j,kj in enumerate(ks):
+                counts[i,j] = self.model._counts_fromto(ki,kj)
         return counts
 
     def housekeeping(self,ks):
@@ -62,6 +62,6 @@ class censored_beta(beta):
         assert np.all(np.diag(counts) == 0)
         counts_from = counts.sum(1)
         for i in np.arange(counts.shape[0]):
-            pi_ii = np.random.beta(1,self.gamma)
-            counts[i,i] = np.random.geometric(1-pi_ii,size=counts_from[i]).sum()
+            pi_ii = np.random.beta(1,self.gamma_0)
+            counts[i,i] = (np.random.geometric(1-pi_ii,size=counts_from[i])-1).sum()
         return counts

@@ -9,7 +9,7 @@ import models, pybasicbayes
 from pymattutil.text import progprint_xrange
 
 obs_hypparams = (0.,0.1,1.,10)
-dur_hypparams = (5*5,5)
+dur_hypparams = (1,20)
 
 if os.path.isfile('data'):
     with open('data','r') as infile:
@@ -20,7 +20,7 @@ if os.path.isfile('data'):
         data, truestates, initialization = thetuple
 else:
     while True:
-        blah = models.collapsed_1dphsmm(2,10,obs=pybasicbayes.distributions.ScalarGaussianNIX(*obs_hypparams),dur=pybasicbayes.distributions.PoissonDuration(*dur_hypparams))
+        blah = models.collapsed_hdphsmm(2,2,obs=pybasicbayes.distributions.ScalarGaussianNIX(*obs_hypparams),dur=pybasicbayes.distributions.Poisson(5*5,5))
         data, truestates = blah.generate(40)
 
         plt.close('all')
@@ -31,25 +31,57 @@ else:
         plt.title('true states')
 
         if 'y' == raw_input('proceed? ').lower():
+            with open('data','w') as outfile:
+                cPickle.dump((data,truestates),outfile,protocol=2)
             break
 
-blah = models.collapsed_hdphsmm(2,10,obs=pybasicbayes.distributions.ScalarGaussianNIX(*obs_hypparams),dur=pybasicbayes.distributions.PoissonDuration(*dur_hypparams))
-blah.add_data(data,stateseq=initialization)
+### sticky hdphmm sampler
 
-allnums = []
-for itr in progprint_xrange(10000):
-    # blah.resample_model_superstates()
-    blah.resample_model_labels()
-    allnums.append(len(set(blah.states_list[0].stateseq)))
+# stickystateseqs = []
+# for superitr in range(5):
+#     blah = models.collapsed_stickyhdphmm(2,2,50,obs=pybasicbayes.distributions.ScalarGaussianNIX(*obs_hypparams))
+#     blah.add_data(data)
 
-# plt.matshow(np.tile(blah.states_list[-1].stateseq,(10,1)))
-# plt.title('after laborious resampling')
+#     hi = []
+#     for itr in progprint_xrange(5000):
+#         blah.resample_model()
+#         hi.append(blah.states_list[0].stateseq.copy())
+#     stickystateseqs.append(hi)
 
-nums = np.bincount(allnums)
-plt.figure()
-plt.stem(np.arange(len(nums)),nums)
+# with open('stickystateseqs.samples','w') as outfile:
+#     cPickle.dump(stickystateseqs,outfile,protocol=2)
 
-plt.figure()
-plt.plot(allnums)
+### hdphsmm superstate sampler
 
-plt.show()
+
+superstatestateseqs = []
+for superitr in range(5):
+    blah = models.collapsed_hdphsmm(2,2,obs=pybasicbayes.distributions.ScalarGaussianNIX(*obs_hypparams),dur=pybasicbayes.distributions.GeometricDuration(*dur_hypparams))
+    blah.add_data(data)
+
+    hi = []
+    for itr in progprint_xrange(5000):
+        blah.resample_model_superstates()
+        hi.append(blah.states_list[0].stateseq.copy())
+    superstatestateseqs.append(hi)
+
+with open('superstatestateseqs.samples','w') as outfile:
+    cPickle.dump(superstatestateseqs,outfile,protocol=2)
+
+### hdphsmm label sampler
+
+
+labelstateseqs = []
+for superitr in range(5):
+    blah = models.collapsed_hdphsmm(2,2,obs=pybasicbayes.distributions.ScalarGaussianNIX(*obs_hypparams),dur=pybasicbayes.distributions.GeometricDuration(*dur_hypparams))
+    blah.add_data(data)
+
+    hi = []
+    for itr in progprint_xrange(5000):
+        blah.resample_model_labels()
+        hi.append(blah.states_list[0].stateseq.copy())
+    labelstateseqs.append(hi)
+
+with open('labelstateseqs.samples','w') as outfile:
+    cPickle.dump(labelstateseqs,outfile,protocol=2)
+
