@@ -422,9 +422,7 @@ class collapsed_hdphsmm_states(collapsed_states):
         if t < self.T-1:
             score += np.log(beta[stateseq[t+1]])
 
-        # if no left trans, it's sum 1/(1-betak)
-        # if no right trans, it's sum betak
-        # if both, it's sum betak/(1-betak)
+        # TODO TODO fix me
         temp = np.random.beta(1,self.beta.gamma_0,size=200)
         temp2 = np.concatenate(((1.,),1-temp[:-1])).cumprod()
         betas = temp*temp2

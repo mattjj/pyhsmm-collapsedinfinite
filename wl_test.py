@@ -1,5 +1,4 @@
 from __future__ import division
-import cPickle
 
 import pyhsmm
 import models
@@ -27,7 +26,7 @@ b = pyhsmm.models.HSMM(2,2,
 b.add_data(data)
 
 seqs = []
-for itr in progprint_xrange(1000):
+for itr in progprint_xrange(2000):
     b.resample_model()
     seqs.append(b.states_list[0].stateseq.copy())
 
@@ -40,7 +39,7 @@ a = models.collapsed_hdphsmm(2,2,
 a.add_data(data)
 
 lseqs = []
-for itr in progprint_xrange(1000):
+for itr in progprint_xrange(2000):
     a.resample_model_labels()
     lseqs.append(a.states_list[0].stateseq.copy())
 
