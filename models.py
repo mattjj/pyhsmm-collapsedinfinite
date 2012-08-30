@@ -120,7 +120,7 @@ class collapsed_hdphsmm(Collapsed):
         self.obs = obs
         self.dur = dur
 
-        self.beta = transitions.censored_beta(model=self,gamma_0=gamma_0)
+        self.beta = transitions.censored_beta(model=self,gamma_0=gamma_0,alpha_0=alpha_0)
 
         self.states_list = []
 
@@ -171,6 +171,17 @@ class collapsed_hdphsmm(Collapsed):
             s.resample_label_version()
         self.beta.resample()
 
+
+class collapsed_hdphsmm_sameashdphmm(collapsed_hdphsmm):
+    def __init__(self,gamma_0,alpha_0,obs,dur,kappa):
+        super(collapsed_hdphsmm_sameashdphmm,self).__init__(gamma_0,alpha_0,obs,dur)
+        self.beta = transitions.censored_beta_sameashdphmm(model=self,gamma_0=gamma_0,alpha_0=alpha_0)
+        self.kappa = kappa
+
+    def add_data(self,data,stateseq=None):
+        self.states_list.append(states.collapsed_hdphsmm_states_sameashdphmm(
+            model=self,beta=self.beta,alpha_0=self.alpha_0,kappa=self.kappa,
+            obs=self.obs,dur=self.dur,data=data,stateseq=stateseq))
 
 
 # TODO methods to convert to/from weak limit representations

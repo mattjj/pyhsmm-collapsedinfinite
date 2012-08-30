@@ -57,11 +57,25 @@ class beta(object):
 
 
 class censored_beta(beta):
+    def __init__(self,alpha_0,*args,**kwargs):
+        self.alpha_0 = alpha_0
+        super(censored_beta,self).__init__(*args,**kwargs)
+
     def _get_countmatrix(self,ks):
         counts = super(censored_beta,self)._get_countmatrix(ks)
         assert np.all(np.diag(counts) == 0)
         counts_from = counts.sum(1)
-        for i in np.arange(counts.shape[0]):
-            pi_ii = np.random.beta(1,self.gamma_0)
+        for i,ki in enumerate(ks):
+            pi_ii = np.random.beta(self.alpha_0*self.betavec[ki],self.alpha_0*(1-self.betavec[ki]))
             counts[i,i] = (np.random.geometric(1-pi_ii,size=counts_from[i])-1).sum()
         return counts
+
+class censored_beta_sameashdphmm(censored_beta):
+    def _get_countmatrix(self,ks):
+        # uses durations as auxiliary variables (true self transitions)
+        counts = super(censored_beta,self)._get_countmatrix(ks)
+        for i,ki in enumerate(ks):
+            durs = self.model._durs_withlabel(ki)
+            counts[i,i] = sum(sum(d) for d in durs) - sum(len(d) for d in durs)
+        return counts
+
