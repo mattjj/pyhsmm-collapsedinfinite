@@ -320,9 +320,7 @@ class collapsed_hdphsmm_states(collapsed_states):
         self.T = len(self.stateseq)
 
     def resample(self):
-        for itr in range(10):
-            self.resample_label_version()
-        self.resample_superstate_version()
+        self.resample_label_version()
 
     def _durs_withlabel(self,k):
         assert k != SAMPLING
@@ -362,7 +360,9 @@ class collapsed_hdphsmm_states(collapsed_states):
     ### label sampler stuff
 
     def resample_label_version(self):
-        for t in np.random.permutation(self.T):
+        # NOTE never changes first label: we assume the initial state
+        # distribution is a delta at that label
+        for t in (np.random.permutation(self.T-1)+1):
             self.stateseq[t] = SAMPLING
             ks = self.model._occupied()
             self.beta.housekeeping(ks)
@@ -377,6 +377,8 @@ class collapsed_hdphsmm_states(collapsed_states):
                 self.stateseq[t] = ks[newlabelidx]
 
     def _label_score(self,t,k):
+        assert t > 0
+
         score = 0.
 
         # unpack variables
@@ -387,7 +389,7 @@ class collapsed_hdphsmm_states(collapsed_states):
         obs, durs = self.obs, self.dur
 
         # left transition (if there is one)
-        if t > 0 and stateseq[t-1] != k:
+        if stateseq[t-1] != k:
             score += np.log(alpha * beta[k] + model._counts_fromto(stateseq[t-1],k)) \
                     - np.log(alpha * (1-beta[stateseq[t-1]]) + model._counts_from(stateseq[t-1]))
 
@@ -403,7 +405,8 @@ class collapsed_hdphsmm_states(collapsed_states):
         return score
 
     def _new_label_score(self,t,ks):
-        # we know there won't be any merges
+        assert t > 0
+
         score = 0.
 
         # unpack
@@ -413,29 +416,21 @@ class collapsed_hdphsmm_states(collapsed_states):
         stateseq = self.stateseq
         obs, durs = self.obs, self.dur
 
-        # left transition (only from counts)
-        if t > 0:
-            score += np.log(alpha) - np.log(alpha*(1.-beta[stateseq[t-1]])
-                            + model._counts_from(stateseq[t-1]))
+        # left transition (only from counts, no to counts)
+        score += np.log(alpha) - np.log(alpha*(1.-beta[stateseq[t-1]])
+                        + model._counts_from(stateseq[t-1]))
 
         # add in right transition (no counts)
         if t < self.T-1:
             score += np.log(beta[stateseq[t+1]])
 
-        # TODO TODO fix me
-        temp = np.random.beta(1,self.beta.gamma_0,size=200)
-        temp2 = np.concatenate(((1.,),1-temp[:-1])).cumprod()
-        betas = temp*temp2
-        case = (t > 0, t < self.T-1)
-        if case == (True,True):
-            # both trans
+        # add in sum over k factor
+        if t < self.T-1:
+            betas = np.random.beta(1,self.beta.gamma_0,size=200)
+            betas[1:] *= (1-betas[:-1]).cumprod()
             score += np.log(self.beta.remaining*(betas/(1-betas)).sum())
-        elif case == (True,False):
-            # left trans but no right trans
+        else:
             score += np.log(self.beta.remaining)
-        elif case == (False,True):
-            # right trans but no left trans
-            score += np.log((1/(1-betas)).sum())
 
         # add in obs/dur scores of local pieces
         for (data,otherdata), (dur,otherdurs) in self._local_group(t,NEW):
@@ -492,252 +487,6 @@ class collapsed_hdphsmm_states(collapsed_states):
             It = slice(t,t+1)
             return slice(A.start,B.stop), [(x,stateseq[x.start]) for x in (A,It,B) if x.stop - x.start > 0]
 
-    ### super-state sampler stuff
-
-    def resample_superstate_version(self):
-        self.stateseq = np.array(self.stateseq,dtype=int)
-        ### run a few super-state sampling sweeps
-        stateseq_norep, durations = rle(self.stateseq)
-        self.starts = starts = np.concatenate(((0,),durations.cumsum()))[:-1]
-        self.ends = ends = starts + durations
-        Tblock = len(durations)
-
-        for t in np.random.permutation(Tblock):
-            self.stateseq[starts[t]:ends[t]] = SAMPLING
-            ks = list(self.model._occupied())
-            self.beta.housekeeping(ks)
-
-            # sample a new value
-            scores = np.array([self._superstate_score(t,k) for k in ks]
-                    + [self._new_superstate_score(t,ks)])
-
-            newstateidx = sample_discrete_from_log(scores)
-            if newstateidx == scores.shape[0]-1:
-                self.stateseq[starts[t]:ends[t]] = self._new_label(ks)
-            else:
-                self.stateseq[starts[t]:ends[t]] = ks[newstateidx]
-
-
-        ### instantiate a finite left-to-right hsmm to resample the boundaries
-        # map the statesequence labels to the canonical ordering
-        stateseq, mapping, unmapping = canonize(self.stateseq)
-
-        # make an obs distn for each UNIQUE state, plus some extras
-        NUM_EXTRA = 5
-        obs_distns, dur_distns = zip(*[(copy(self.obs),copy(self.dur)) for r in range(len(mapping)+NUM_EXTRA)])
-        for newlabel,o,d in zip(range(len(mapping)),obs_distns,dur_distns):
-            o.resample(self.model._data_withlabel(unmapping[newlabel]))
-            d.resample(self.model._durs_withlabel(unmapping[newlabel]))
-
-
-        extra_obs = [copy(self.obs) for r in range(NUM_EXTRA)]
-        extra_dur = [copy(self.dur) for r in range(NUM_EXTRA)]
-        for o,d in zip(extra_obs,extra_dur):
-            o.resample()
-            d.resample()
-
-        stateseq_norep, _ = rle(stateseq)
-        N = len(stateseq_norep) + NUM_EXTRA
-        finite_hsmm_states = pyhsmm.internals.states.hsmm_states_python(
-                len(self.stateseq),
-                N,
-                [obs_distns[s] for s in stateseq_norep] + extra_obs,
-                [dur_distns[s] for s in stateseq_norep] + extra_dur,
-                dummytrans(A=np.eye(N,N,1)),
-                pyhsmm.internals.initial_state.start_zero(N),
-                data=self.data) # instantiating will call resample once
-
-        for t,s in enumerate(finite_hsmm_states.stateseq):
-            if s in stateseq_norep:
-                self.stateseq[t] = unmapping[stateseq_norep[s]]
-            else:
-                # it's a new label!
-                if s in unmapping:
-                    self.stateseq[t] = unmapping[s]
-                else:
-                    newlabel = self._new_label(list(self.model._occupied()))
-                    unmapping[s] = newlabel
-                    self.stateseq[t] = unmapping[s]
-
-    def _superstate_score(self,tblock,k):
-        score = 0.
-        stateseq_norep, durations = rle(self.stateseq)
-        data = self.data
-        obs, dur = self.obs, self.dur
-        model = self.model
-        alpha = self.alpha_0
-        beta = self.beta.betavec
-
-        start,end = self.starts[tblock], self.ends[tblock]
-
-        if tblock > 0:
-            if stateseq_norep[tblock-1] == k:
-                return -np.inf
-            score += np.log(alpha*beta[k] + model._counts_fromto(stateseq_norep[tblock-1],k)) \
-                    - np.log(alpha * (1-beta[stateseq_norep[tblock-1]])
-                            + model._counts_from(stateseq_norep[tblock-1]))
-
-        if tblock < len(stateseq_norep)-1:
-            if stateseq_norep[tblock+1] == k:
-                return -np.inf
-            score += np.log(alpha*beta[stateseq_norep[tblock+1]]
-                    + model._counts_fromto(k,stateseq_norep[tblock+1])) \
-                    - np.log(alpha*(1-beta[k]) + model._counts_from(k))
-
-        score += obs.log_predictive(data[start:end],model._data_withlabel(k)) \
-                + dur.log_predictive(durations[tblock],model._durs_withlabel(k))
-
-        return score
-
-    def _new_superstate_score(self,tblock,ks):
-        score = 0.
-
-        beta = self.beta.betavec
-        stateseq_norep, durations = rle(self.stateseq)
-        data = self.data
-        alpha = self.alpha_0
-        model = self.model
-        obs, dur = self.obs, self.dur
-        start, end = self.starts[tblock], self.ends[tblock]
-
-        betanew = self.beta.remaining
-
-        if tblock > 0:
-            score += np.log(alpha) + np.log(betanew) \
-                    - np.log(alpha*(1.-beta[stateseq_norep[tblock-1]])
-                            + model._counts_from(stateseq_norep[tblock-1]))
-
-        if tblock < len(stateseq_norep)-1:
-            score += np.log(beta[stateseq_norep[tblock+1]]) - np.log(self.beta._get_sum())
-
-        score += obs.log_marginal_likelihood(data[start:end]) \
-                + dur.log_marginal_likelihood(durations[tblock])
-
-        return score
-
-
-class collapsed_hdphsmm_states_sameashdphmm(collapsed_hdphsmm_states):
-    # there are three things to tweak:
-    #  - endpoints shouldn't count as transitions out, solved by scoring
-    #  endpoint canceling a multiplicative factor of
-    #  alpha(1-beta_self)+n_thisstate/alpha+totdur
-    #  - dur hyperparameters need to be tied to betavec, solved by setting
-    #  hyperparameters to be (alpha(1-beta_self),alpha*beta_self)
-    #  - [DONE] beta should use counts_from that include totdurs on diagonal, while
-    #  transition scores should use counts_from that keeps zero on diagonal,
-    #  solved by fixing beta
-
-    # hmm turning out too complicated
-    def __init__(self,kappa,*args,**kwargs):
-        super(collapsed_hdphsmm_states_sameashdphmm,self).__init__(*args,**kwargs)
-        self.kappa = kappa
-
-    def _superstate_score(self,tblock,k):
-        score = 0.
-        stateseq_norep, durations = rle(self.stateseq)
-        data = self.data
-        obs, dur = self.obs, self.dur
-        model = self.model
-        alpha = self.alpha_0
-        beta = self.beta.betavec
-
-        start,end = self.starts[tblock], self.ends[tblock]
-
-        # set dur hyperparameters
-        self.dur.alpha_0, self.dur.beta_0 = self.alpha_0*(1-something), self.alpha_0*something+self.kappa
-
-        if tblock > 0:
-            if stateseq_norep[tblock-1] == k:
-                return -np.inf
-            score += np.log(alpha*beta[k] + model._counts_fromto(stateseq_norep[tblock-1],k)) \
-                    - np.log(alpha * (1-beta[stateseq_norep[tblock-1]])
-                            + model._counts_from(stateseq_norep[tblock-1]))
-
-        if tblock < len(stateseq_norep)-1:
-            if stateseq_norep[tblock+1] == k:
-                return -np.inf
-            score += np.log(alpha*beta[stateseq_norep[tblock+1]]
-                    + model._counts_fromto(k,stateseq_norep[tblock+1])) \
-                    - np.log(alpha*(1-beta[k]) + model._counts_from(k))
-
-        score += obs.log_predictive(data[start:end],model._data_withlabel(k)) \
-                + dur.log_predictive(durations[tblock],model._durs_withlabel(k))
-
-        return score
-
-    def _new_superstate_score(self,tblock,ks):
-        # set dur hyperparameters
-        self.dur.alpha_0, self.dur.beta_0 = self.alpha_0*(1-something), self.alpha_0*something+self.kappa
-
-        score = super(collapsed_hdphsmm_states_sameashdphmm,self)._new_superstate_score(tblock,ks)
-        # but those terms surely cancel in trans scores terms...
-        # the 'get out' term cancels with the denomenator of the right
-        # transition
-        # but... does that help? i still need to sum over lots of crap
-
-        # score += obs.log_marginal_likelihood(data[start:end]) \
-        #         + dur.log_marginal_likelihood(durations[tblock])
-
-        # if this was the last state, don't count an exit transition
-
-        return score
-
-    def _label_score(self,t,k):
-        score = 0.
-
-        # unpack variables
-        model = self.model
-        alpha = self.alpha_0
-        beta = self.beta.betavec
-        stateseq = self.stateseq
-        obs, durs = self.obs, self.dur
-
-        # left transition
-        if t > 0 and stateseq[t-1] != k:
-            score += np.log(alpha * beta[k] + model._counts_fromto(stateseq[t-1],k)) \
-                    - np.log(alpha * (1-beta[stateseq[t-1]]) + model._counts_from(stateseq[t-1]))
-
-        # right transition
-        if t < self.T-1 and stateseq[t+1] != k:
-            score += np.log(alpha * beta[stateseq[t+1]] + model._counts_fromto(k,stateseq[t+1])) \
-                    - np.log(alpha * (1-beta[k]) + model._counts_from(k))
-
-        # predictive likelihoods
-        for (data,otherdata), (dur,otherdurs) in self._local_group(t,k):
-            score += obs.log_predictive(data,otherdata) + durs.log_predictive(dur,otherdurs)
-
-        return score
-
-    def _new_label_score(self,t,ks):
-        # we know there won't be any merges
-        score = 0.
-
-        # unpack
-        model = self.model
-        alpha = self.alpha_0
-        beta = self.beta.betavec
-        stateseq = self.stateseq
-        obs, durs = self.obs, self.dur
-
-        # compute betanew (aka betarest), this line is the main reason this is a
-        # separate method from _label_score
-        betanew = self.beta.remaining
-
-        # left transition (only from counts)
-        if t > 0:
-            score += np.log(alpha) + np.log(betanew) \
-                    - np.log(alpha*(1.-beta[stateseq[t-1]])
-                            + model._counts_from(stateseq[t-1]))
-
-        # add in right transition (no counts)
-        if t < self.T-1:
-            score += np.log(beta[stateseq[t+1]]) - np.log(1.-betanew)
-
-        # add in obs/dur scores of local pieces
-        for (data,otherdata), (dur,otherdurs) in self._local_group(t,NEW):
-            score += obs.log_predictive(data,otherdata) + durs.log_predictive(dur,otherdurs)
-
-        return score
 
 #######################
 #  Utility Functions  #

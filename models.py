@@ -6,10 +6,8 @@ from matplotlib import cm
 import abc
 from collections import defaultdict
 
-from warnings import warn
 
 from pybasicbayes.abstractions import ModelGibbsSampling
-from pymattutil.general import rle
 
 from internals import transitions, states
 
@@ -34,6 +32,9 @@ class Collapsed(ModelGibbsSampling):
     def _counts_fromto(self,k1,k2):
         # returns an integer
         return sum(s._counts_fromto(k1,k2) for s in self.states_list)
+
+    def _initial_counts(self,k):
+        return sum(s.stateseq[0] == k for s in self.states_list)
 
     def _data_withlabel(self,k):
         # returns a list of (masked) arrays
@@ -160,11 +161,6 @@ class collapsed_hdphsmm(Collapsed):
             self.states_list.append(tempstates)
 
         return obs, tempstates.stateseq
-
-    def resample_model_superstates(self):
-        for s in self.states_list:
-            s.resample_superstate_version()
-        self.beta.resample()
 
     def resample_model_labels(self):
         for s in self.states_list:
