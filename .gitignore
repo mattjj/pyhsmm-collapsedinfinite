@@ -1,6 +1,7 @@
 *.pyc
 *.pyo
 *.pdf
-data
+data*
 *.txt
 *.samples
+/cached_func_calls
