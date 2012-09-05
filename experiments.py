@@ -74,35 +74,6 @@ def wl_is_faster_hamming():
     return wl_errs, da_errs
 allfigfuncs.append(wl_is_faster_hamming)
 
-def wl_is_faster_autocorr():
-    # TODO also provide time scaling
-
-    ### get samples
-    wl_samples = get_hdphsmm_wl_poisson_samples(hsmm_data,nruns=100,niter=300,L=10)
-    da_samples = get_hdphsmm_da_poisson_samples(hsmm_data,nruns=24,niter=150)
-
-    ### get autocorrelations for the middle element
-    wl_corr = util.get_autocorr(wl_samples)
-    da_corr = util.get_autocorr(da_samples)
-
-    ### plot
-    plt.figure()
-
-    for corrs, samplername, color in zip([wl_corr,da_corr],['Weak Limit','Direct Assignment'],['b','g']):
-        plt.plot(corrs.mean(0).mean(1),color+'-',label='%s Sampler' % samplername)
-        plt.plot(util.scoreatpercentile(corrs[...,corrs.shape[-1]//2],per=10,axis=0),color+'--')
-        plt.plot(util.scoreatpercentile(corrs[...,corrs.shape[-1]//2],per=90,axis=0),color+'--')
-
-    plt.legend()
-    plt.xlabel('lag')
-    plt.xlim(0,np.where(da_corr.mean(0).mean(1) < 0.05)[0][0])
-    plt.title('Autocorrelations')
-
-    save('figures/wl_is_faster_autocorr.pdf')
-
-    return wl_corr, da_corr
-allfigfuncs.append(wl_is_faster_autocorr)
-
 def hsmm_vs_stickyhmm():
     # show convergence rates in #iter are same
 
