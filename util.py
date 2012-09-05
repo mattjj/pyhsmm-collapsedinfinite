@@ -45,3 +45,32 @@ def stateseq_hamming_error(sampledstates,truestates):
 
     return errors if errors.shape[0] > 1 else errors[0]
 
+def scoreatpercentile(data,per,axis):
+    '''
+    like the function in scipy.stats but with an axis argument, and works on
+    arrays.
+    '''
+    a = np.sort(data,axis=axis)
+    idx = per/100. * (data.shape[axis]-1)
+
+    if (idx % 1 == 0):
+        return a[[slice(None) if ii != axis else idx for ii in range(a.ndim)]]
+    else:
+        lowerweight = 1-(idx % 1)
+        upperweight = (idx % 1)
+        idx = int(np.floor(idx))
+        return lowerweight * a[[slice(None) if ii != axis else idx for ii in range(a.ndim)]] \
+                + upperweight * a[[slice(None) if ii != axis else idx+1 for ii in range(a.ndim)]]
+
+def get_autocorr(chains):
+    '''
+    component-by-component
+    '''
+    chains = np.array(chains)
+    results = np.zeros(chains.shape)
+    for chainidx, chain in enumerate(chains):
+        for idx in range(chain.shape[1]):
+            temp = chain[:,idx] - chain[:,idx].mean(0)
+            temp = np.correlate(temp,temp,'full')
+            results[chainidx,:,idx] = temp[temp.shape[0]//2:]
+    return results
