@@ -7,10 +7,11 @@ from timeit import timeit
 #  durdistnstring='pyhsmm.basic.distributions.PoissonDuration(2*30,2)')
 
 NUM_RUNS = 5
-NITER = 20
+NITER = 50
 
 wl_setup = \
 '''
+import numpy as np
 import pyhsmm
 model = pyhsmm.models.HSMM({alpha},{gamma},
     [{obsdistnstring} for itr in range({L})],
@@ -22,6 +23,7 @@ model.add_data(np.{data!r})
 # collapsedinfinite models.py file
 da_setup = \
 '''
+import numpy as np
 import models, pyhsmm
 model = models.collapsed_hdphsmm({alpha_0},{gamma_0},
         {obsclassstring},

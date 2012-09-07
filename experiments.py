@@ -4,7 +4,7 @@ na = np.newaxis
 import cPickle, os
 from matplotlib import pyplot as plt
 
-import pyhsmm, models, util
+import pyhsmm, models, util, timing
 import diskmemo
 
 SAVING = False
@@ -42,9 +42,16 @@ else:
 
 allfigfuncs = []
 
-def wl_is_faster_hamming():
-    # TODO also provide time scaling
+def compare_timing():
+    wl_timing = timing.get_wl_timing(alpha=6,gamma=6,L=10,data=hsmm_data,obsdistnstring='pyhsmm.basic.distributions.ScalarGaussianNIX(mu_0=0.,kappa_0=0.02,sigmasq_0=1,nu_0=10)',durdistnstring='pyhsmm.basic.distributions.PoissonDuration(2*10,2)')
+    da_timing = timing.get_da_timing(alpha_0=6,gamma_0=6,data=hsmm_data,obsclassstring='pyhsmm.basic.distributions.ScalarGaussianNIX(mu_0=0.,kappa_0=0.02,sigmasq_0=1,nu_0=10)',durclassstring='pyhsmm.basic.distributions.PoissonDuration(2*10,2)')
 
+    print 'WL time per iteration: %0.4f' % wl_timing
+    print 'DA time per iteration: % 0.4f' % da_timing
+
+    return wl_timing, da_timing
+
+def wl_is_faster_hamming():
     # show hamming error to true state sequence decreases faster with wl
 
     ### get samples
@@ -78,14 +85,14 @@ def hsmm_vs_stickyhmm():
     # show convergence rates in #iter are same
 
     ### get samples
-    hsmm_samples = get_hdphsmm_da_geo_samples(hmm_data,nruns=25,niter=300)
-    shmm_samples = get_shdphmm_da_samples(hmm_data,nruns=25,niter=300)
+    hsmm_samples = get_hdphsmm_da_geo_samples(hmm_data,nruns=50,niter=100)
+    shmm_samples = get_shdphmm_da_samples(hmm_data,nruns=50,niter=100)
 
     ### get hamming errors for samples
     def f(tup):
         return util.stateseq_hamming_error(tup[0],tup[1])
-    hsmm_errs = np.array(dv.map_sync(f,zip(hsmm_samples,[hsmm_labels]*len(hsmm_samples))))
-    shmm_errs = np.array(dv.map_sync(f,zip(shmm_samples,[hsmm_labels]*len(shmm_samples))))
+    hsmm_errs = np.array(dv.map_sync(f,zip(hsmm_samples,[hmm_labels]*len(hsmm_samples))))
+    shmm_errs = np.array(dv.map_sync(f,zip(shmm_samples,[hmm_labels]*len(shmm_samples))))
 
     ### plot
     plt.figure()
@@ -118,11 +125,11 @@ def get_hdphsmm_da_poisson_samples(data,nruns,niter):
 
 @diskmemo.memoize
 def get_shdphmm_da_samples(data,nruns,niter):
-    return get_samples_parallel(hdphsmm_da_geo_sampler,nruns,niter=niter,data=hmm_data,alpha_0=6,gamma_0=6)
+    return get_samples_parallel(shdphmm_da_sampler,nruns,niter=niter,data=data,alpha_0=6,gamma_0=6,kappa=30)
 
 @diskmemo.memoize
 def get_hdphsmm_da_geo_samples(data,nruns,niter):
-    return get_samples_parallel(shdphmm_da_sampler,nruns,niter=niter,data=hmm_data,alpha_0=6,gamma_0=6)
+    return get_samples_parallel(hdphsmm_da_geo_sampler,nruns,niter=niter,data=data,alpha_0=6,gamma_0=6)
 
 ####################
 #  Sample-running  #

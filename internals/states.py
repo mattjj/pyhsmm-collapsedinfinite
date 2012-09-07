@@ -2,13 +2,10 @@ from __future__ import division
 import numpy as np
 na = np.newaxis
 import collections, itertools
-from copy import copy
 import abc
 
-# TODO change pymattutil to pyhsmm.util
-from pymattutil.stats import sample_discrete, sample_discrete_from_log, combinedata
-from pymattutil.general import rle as rle
-import pyhsmm
+from pyhsmm.util.stats import sample_discrete, sample_discrete_from_log, combinedata
+from pyhsmm.util.general import rle as rle
 
 # NOTE: assumes censoring. can make no censoring by adding to score of last
 # segment
@@ -138,7 +135,7 @@ class collapsed_stickyhdphmm_states(collapsed_states):
                                             + self._counts_fromto(stateseq[t-1],k)
                                             for k in ks])
             # for those states plus a new one, sample proportional to
-            scores = np.array([(alpha*betavec[k] + (kappa if k == stateseq[t-1] else 0) + ft)
+            scores = np.array([(alpha*betavec[k] + (kappa if k == stateseq[t+1] else 0) + ft)
                     for k,ft in zip(ks,fromto_counts)] + [alpha*betarest])
             nextstateidx = sample_discrete(scores)
             if nextstateidx == scores.shape[0]-1:
@@ -184,9 +181,9 @@ class collapsed_stickyhdphmm_states(collapsed_states):
             # indicators since we may need to include the left transition in
             # counts (since we are scoring exchangeably, not independently)
             another_from = 1 if t > 0 and stateseq[t-1] == k else 0
-            another_fromto = 1 if t > 0 and stateseq[t-1] == k and stateseq[t+1] == k else 0
+            another_fromto = 1 if (t > 0 and stateseq[t-1] == k and stateseq[t+1] == k) else 0
 
-            score += np.log( (alpha*betavec[stateseq[t+1]] + (kappa if k == stateseq[t-1] else 0)
+            score += np.log( (alpha*betavec[stateseq[t+1]] + (kappa if k == stateseq[t+1] else 0)
                                 + model._counts_fromto(k,stateseq[t+1]) + another_fromto)
                                 / (alpha+kappa+model._counts_from(k) + another_from) )
 
