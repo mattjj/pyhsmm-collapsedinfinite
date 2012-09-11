@@ -55,7 +55,6 @@ class beta(object):
             piece, self.remaining = p*self.remaining, (1-p)*self.remaining
             yield piece
 
-
 class censored_beta(beta):
     def __init__(self,alpha_0,*args,**kwargs):
         self.alpha_0 = alpha_0
